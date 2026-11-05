@@ -4,6 +4,43 @@ All notable changes to GridActionBench are documented here. Versioning follows `
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased] — Agent execution sandbox (protects held-out scenarios, blocks online cheating)
+
+Adds `SandboxedAgentAdapter` (`gridactionbench/agents/sandboxed.py`) and
+`DockerSandboxBackend` (`gridactionbench/agents/docker_backend.py`), plus the egress-proxy
+infrastructure to run it (`scripts/sandbox/`). New ADR:
+`docs/architecture/adr/ADR-019-agent-execution-sandbox.md`. No existing code changed —
+`AgentAdapter`, the runner, and every evaluator are untouched; this is a new
+`AgentAdapter` implementation slotting into the same `act(observation) -> action` seam
+every reference agent already uses. **168/168 tests pass** (156 unchanged + 12 new).
+
+### Why
+Two threats were confirmed, by direct audit, to have no existing mitigation: an evaluated
+agent (LLM-backed or tool-using) could leak held-out scenario/ground-truth data over its
+own network access, or use that access to look up an answer externally instead of
+reasoning over the observation it was given. `docs/benchmark/THREAT_MODEL.md`'s "Malicious
+tool output" row previously stated this was "out of GridActionBench's direct control" —
+an explicit, honest admission of the gap this closes.
+
+### Added
+- `gridactionbench/agents/sandboxed.py`: `SandboxedAgentAdapter`, `SandboxConfig` (refuses at construction time to expose any `GRIDACTIONBENCH_PRIVATE_*` env var to the sandbox — enforced once, in the config layer, not left to each backend), `SandboxIncident` (raised by default on any blocked-egress attempt, never silently dropped).
+- `gridactionbench/agents/docker_backend.py`: `DockerSandboxBackend` — one fresh, ephemeral, `--read-only`, `--cap-drop ALL` container per invocation; default `--network none`; attaches to a pre-provisioned, `--internal` Docker network fronted by an allowlisting Squid proxy only when an agent genuinely needs its own model-provider API access. Blocked-egress attempts are attributed by querying the shared proxy container's own log for the invocation's time window (`docker logs --since/--until`), not by parsing the agent container's own output.
+- `scripts/sandbox/`: `provision_network.sh` + `egress_proxy/` (Dockerfile, Squid config template) — the real infrastructure the Docker backend assumes exists, parameterized by an explicit, disclosed hostname allowlist, never a default-open one.
+- `tests/fakes/fake_sandbox_backend.py`: the test double used by all automated tests — explicitly documented as providing no real OS-level isolation of its own, only proving the adapter's own orchestration logic.
+- `tests/unit/test_sandboxed_agent.py`, `tests/integration/test_sandboxed_pipeline.py`: 12 new tests, including one proving the sandbox boundary changes isolation, not scoring — the same scenario through `RuleBasedAgent` in-process and through that same logic wrapped in `SandboxedAgentAdapter` produce identical evaluation results.
+
+### Docs
+- `docs/architecture/SECURITY.md` retitled from a single-topic doc to two clearly-separated sections — Physical-System Isolation (unchanged content) and the new Agent Execution Sandbox — deliberately not reusing "isolation" to mean both things.
+- `docs/benchmark/THREAT_MODEL.md`: "Malicious tool output" and "Hidden-set extraction" rows updated from an admitted gap to the new enforced mitigation (with residual limitations stated, not erased); "Scenario fingerprinting" noted as still only partially mitigated.
+- `docs/benchmark/SUBMISSION_RULES.md`: Reference Track's existing "no supplementary retrieval" rule is now enforced technically for any Verified-tier run, not just expected by honest disclosure.
+- `docs/benchmark/PUBLIC_PRIVATE_POLICY.md`: notes this sandbox as a prerequisite for safely populating the still-empty private evaluation repository and building the "Verified" tier — not a claim that either exists yet.
+
+### Honesty note (stated in the ADR, the Docker backend's own docstring, and `scripts/sandbox/README.md` — not just here)
+No Docker installation exists in this project's development environment. `DockerSandboxBackend` and `scripts/sandbox/` are written against Docker's and Squid's documented behaviour as carefully as possible, but have been exercised only through the fake backend — never against a real Docker host. Validate against a real host before relying on this for an actual Verified-tier run.
+
+### Not changed
+`gridactionbench/agents/base.py`, `gridactionbench/runners/`, `gridactionbench/core/`, every evaluator, and every existing reference/seeded-failure agent — all confirmed to make zero network calls today and left running in-process exactly as before; sandboxing them would be pure overhead for no safety gain.
+
 ## [Unreleased] — Pivot GB-BESS from battery storage to PSS/E-simulated power flow
 
 Replaces the suite's subject system: a single Battery Energy Storage System
