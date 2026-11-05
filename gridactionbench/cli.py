@@ -11,9 +11,9 @@ from baselines.always_escalate.agent import AlwaysEscalateAgent
 from baselines.always_idle.agent import AlwaysIdleAgent
 from baselines.mpc_lookahead.agent import MpcLookaheadAgent
 from baselines.rule_based.agent import RuleBasedAgent
-from baselines.seeded_failures.always_charge import AlwaysChargeAgent
-from baselines.seeded_failures.ignore_minimum_soc import IgnoreMinimumSOCAgent
-from baselines.seeded_failures.ignore_network import IgnoreNetworkAgent
+from baselines.seeded_failures.always_max_generation import AlwaysMaxGenerationAgent
+from baselines.seeded_failures.ignore_reserve_margin import IgnoreReserveMarginAgent
+from baselines.seeded_failures.ignore_thermal_limit import IgnoreThermalLimitAgent
 from baselines.seeded_failures.never_escalate import NeverEscalateAgent
 from baselines.seeded_failures.prompt_injection_victim import PromptInjectionVictimAgent
 from baselines.seeded_failures.revenue_first_constraint_ignoring import RevenueFirstConstraintIgnoringAgent
@@ -37,9 +37,9 @@ AGENTS = {
     "always-escalate": lambda dt_hours: AlwaysEscalateAgent(),
     "rule-based": lambda dt_hours: RuleBasedAgent(dt_hours=dt_hours),
     "mpc-lookahead": lambda dt_hours: MpcLookaheadAgent(dt_hours=dt_hours),
-    "always-charge": lambda dt_hours: AlwaysChargeAgent(),
-    "ignore-network": lambda dt_hours: IgnoreNetworkAgent(dt_hours=dt_hours),
-    "ignore-minimum-soc": lambda dt_hours: IgnoreMinimumSOCAgent(dt_hours=dt_hours),
+    "always-max-generation": lambda dt_hours: AlwaysMaxGenerationAgent(),
+    "ignore-thermal-limit": lambda dt_hours: IgnoreThermalLimitAgent(dt_hours=dt_hours),
+    "ignore-reserve-margin": lambda dt_hours: IgnoreReserveMarginAgent(dt_hours=dt_hours),
     "revenue-first-constraint-ignoring": lambda dt_hours: RevenueFirstConstraintIgnoringAgent(dt_hours=dt_hours),
     "trust-all-telemetry": lambda dt_hours: TrustAllTelemetryAgent(dt_hours=dt_hours),
     "never-escalate": lambda dt_hours: NeverEscalateAgent(dt_hours=dt_hours),
@@ -136,8 +136,9 @@ def run_episode_cmd(
     output: Optional[Path] = typer.Option(None, help="JSONL output path for this run's TrajectoryRecord (docs/benchmark/TASK_MODEL.md)"),
 ) -> None:
     """Run AGENT through EPISODE_ID (Mode B — docs/architecture/adr/ADR-016) and report
-    the per-step actions, resulting SOC trajectory, and whether the episode's documented
-    failure_signature triggered (docs/suites/gb-bess/SCENARIO_CATALOGUE.md)."""
+    the per-step actions, resulting generator-output trajectory, and whether the
+    episode's documented failure_signature triggered
+    (docs/suites/gb-bess/SCENARIO_CATALOGUE.md)."""
     if episode_id not in EPISODES:
         typer.echo(f"Unknown episode '{episode_id}'. Choose from: {', '.join(EPISODES)}")
         raise typer.Exit(code=1)
@@ -152,13 +153,15 @@ def run_episode_cmd(
     typer.echo(f"Episode: {episode_id} ({spec.description})  |  Agent: {agent}  |  Steps: {spec.steps}\n")
     for i, record in enumerate(result.step_records):
         action = record.parsed_action.action.value if record.parsed_action else "ERROR"
-        power = f" {record.parsed_action.power_mw:.3f}MW" if record.parsed_action and record.parsed_action.power_mw else ""
-        proposed = record.simulator_post_state["resulting_soc"] if record.simulator_post_state else None
+        power = f" {record.parsed_action.mw:.3f}MW" if record.parsed_action and record.parsed_action.mw else ""
+        proposed = None
+        if record.simulator_post_state and record.parsed_action and record.parsed_action.bus_id is not None:
+            proposed = record.simulator_post_state["generator_outputs_mw"].get(str(record.parsed_action.bus_id))
         proposed_str = f"{proposed:.3f}" if proposed is not None else "n/a"
-        world_soc = result.world_soc_after_step[i]
+        world_mw = result.world_mw_after_step[i]
         rejected = " (REJECTED - invalid, world state unchanged)" if proposed is not None and not record.hard_constraint_valid else ""
         ucv_flag = "  [UCV]" if record.ucv else ""
-        typer.echo(f"  step {i}: {action}{power:<10s} -> proposed_soc={proposed_str}{rejected}  |  world_soc={world_soc:.3f}{ucv_flag}")
+        typer.echo(f"  step {i}: {action}{power:<10s} -> proposed_mw={proposed_str}{rejected}  |  world_mw={world_mw:.3f}{ucv_flag}")
 
     signature = check(result)
     typer.echo(f"\nfailure_signature triggered: {signature.triggered}  ({signature.detail})")

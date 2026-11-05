@@ -119,7 +119,7 @@ def build_trajectory_record_from_episode(
         initial_state_hash=initial_state_hash,
         steps=steps,
         termination_reason="steps_exhausted",
-        terminal_state={"world_soc_after_step": result.world_soc_after_step[-1] if result.world_soc_after_step else None},
+        terminal_state={"world_mw_after_step": result.world_mw_after_step[-1] if result.world_mw_after_step else None},
         any_ucv=result.any_ucv,
         ucv_count=result.ucv_count,
         mean_economic_decision_quality=mean_eq,

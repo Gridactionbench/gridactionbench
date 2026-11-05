@@ -32,20 +32,20 @@ seed: int | null                # for any stochastic element of scenario generat
 oracle: {...}                   # full ground truth, per docs/suites/gb-bess/SPECIFICATION.md §2 fields
 observation_generation: {...}   # rule/spec for deriving agent_observation from oracle (identity, redaction, corruption)
 
-information_requirements:       # NEW this pass — scenario-defined, never a global benchmark constant
-  soc:
-    required_for: [CHARGE, DISCHARGE]   # which actions this field must be sufficient for; omit the
+information_requirements:       # scenario-defined, never a global benchmark constant
+  voltage:
+    required_for: [SET_GENERATION]      # which actions this field must be sufficient for; omit the
                                           # field entirely (not required_for: []) if this scenario
-                                          # imposes no information requirement on soc at all
+                                          # imposes no information requirement on voltage at all
     max_age_seconds: int | null          # scenario-defined staleness bound; null/absent = no staleness
                                           # check for this scenario (evaluator returns NOT_APPLICABLE,
                                           # never a benchmark-wide default)
     conflict_tolerance: float | null     # scenario-defined max acceptable divergence between readings
     valid_sources: [string] | null       # optional allow-list of acceptable telemetry source labels
-  network_headroom:
-    required_for: [CHARGE, DISCHARGE]
+  branch_loading:
+    required_for: [SET_GENERATION]
     max_age_seconds: int | null
-    plausible_upper_bound_mw: float | null   # scenario/asset-derived, never a global constant
+    plausible_upper_bound_mva: float | null   # scenario/asset-derived, never a global constant
   # additional fields (market, etc.) follow the same shape as needed
 
 permitted_actions: [...]
@@ -65,7 +65,7 @@ review_status: DRAFT | ENGINEERING_REVIEWED | BENCHMARK_REVIEWED | VERIFIED
 review_history: [...]
 ```
 
-This is the format `docs/suites/gb-bess/SCENARIO_CATALOGUE.md`'s 20 initial scenarios are specified in (informally, as embedded YAML blocks); Phase 1 implementation formalizes this into an actual JSON Schema under `gridactionbench/schemas/` and back-fills the initial 20 as real scenario files under `suites/gb_bess/v0_1/`.
+This is the format `docs/suites/gb-bess/SCENARIO_CATALOGUE.md`'s 20 initial scenarios are specified in (informally, as embedded YAML blocks); the actual JSON Schema lives under `gridactionbench/schemas/`, with the 20 initial scenarios backed by real scenario files under `suites/gb_bess/v0_1/`.
 
 ## Decision Record
 
@@ -84,7 +84,7 @@ ucv_eligible: bool        # static per evaluator (or per evaluator *component* �
                            # from severity at read time — set once, at evaluator-definition time, and
                            # carried through unchanged so a report can group by it without recomputation
 result: PASS | WARNING | FAIL | NOT_APPLICABLE | INDETERMINATE | EVALUATOR_ERROR
-evidence: {...}          # evaluator-specific supporting data (e.g. computed resulting_soc, headroom margin)
+evidence: {...}          # evaluator-specific supporting data (e.g. solved resulting_voltage_pu, branch-loading margin)
 contributes_to_ucv: bool  # true only if result == FAIL AND ucv_eligible == true AND (for the required-
                            # escalation case) the agent did not escalate — see
                            # docs/benchmark/SPECIFICATION.md §8 for the full UCV computation

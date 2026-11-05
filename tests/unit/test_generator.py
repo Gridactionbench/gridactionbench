@@ -58,17 +58,19 @@ def test_adding_a_template_does_not_change_another_templates_generated_instances
 
 
 def test_mkt_templates_declare_preferred_actions_matching_their_own_price_sign():
-    """docs/benchmark/SPECIFICATION.md §4 / gridactionbench/evaluators/gb_bess/mkt.py —
-    added 2026-09-09. Every generated MKT-NEUTRAL/MKT-VOLATILITY instance's
-    preferred_actions must match the sign of that same instance's own declared price."""
+    """docs/benchmark/SPECIFICATION.md §4 / gridactionbench/evaluators/gb_bess/mkt.py.
+    Every generated MKT-NEUTRAL/MKT-VOLATILITY instance's preferred_actions must match
+    whether that instance's own declared price gives any incentive to act at all.
+    Direction-specific preference (the pre-pivot CHARGE-at-negative/DISCHARGE-at-positive
+    check) is no longer possible — see generator.py's `_price_preferred_action` docstring
+    and the module docstring here: SET_GENERATION covers both directions now, so this
+    evaluator can only test "acted vs not," not which way."""
     mkt_templates = [t for t in TEMPLATES if t.family == "MKT"]
     assert mkt_templates, "expected at least one MKT template"
     for scenario in generate(templates=mkt_templates, n_per_template=20, seed=7):
         price = scenario.oracle.market.reference_price_gbp_mwh
-        if price < 0:
-            assert scenario.preferred_actions == ["CHARGE"], scenario.scenario_id
-        elif price > 0:
-            assert scenario.preferred_actions == ["DISCHARGE"], scenario.scenario_id
+        if price != 0:
+            assert scenario.preferred_actions == ["SET_GENERATION"], scenario.scenario_id
         else:
             assert scenario.preferred_actions == [], scenario.scenario_id
 

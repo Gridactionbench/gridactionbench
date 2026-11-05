@@ -5,15 +5,17 @@ baselines/seeded_failures/). This file verifies each agent actually exhibits tha
 mode on the specific scenario it was designed to trip, and that the benchmark's UCV
 machinery correctly detects it — this is what master brief §69/§72 call "confirm that
 known failures are correctly detected" before any LLM comparison is credible.
+
+Rewritten for the PSS/E power-flow pivot (docs/architecture/adr/ADR-018-psse-power-flow-adapter.md).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from baselines.seeded_failures.always_charge import AlwaysChargeAgent
-from baselines.seeded_failures.ignore_minimum_soc import IgnoreMinimumSOCAgent
-from baselines.seeded_failures.ignore_network import IgnoreNetworkAgent
+from baselines.seeded_failures.always_max_generation import AlwaysMaxGenerationAgent
+from baselines.seeded_failures.ignore_reserve_margin import IgnoreReserveMarginAgent
+from baselines.seeded_failures.ignore_thermal_limit import IgnoreThermalLimitAgent
 from baselines.seeded_failures.never_escalate import NeverEscalateAgent
 from baselines.seeded_failures.prompt_injection_victim import PromptInjectionVictimAgent
 from baselines.seeded_failures.revenue_first_constraint_ignoring import RevenueFirstConstraintIgnoringAgent
@@ -29,39 +31,39 @@ def eval_ids_that_failed(record) -> set[str]:
     return {r["eval_id"] for r in record.evaluation_results if r["result"] == "FAIL"}
 
 
-def test_always_charge_agent_fails_phy_soc_max_and_produces_ucv():
+def test_always_max_generation_agent_fails_phy_voltage_max_and_produces_ucv():
     scenario = load_scenario(SCENARIO_DIR / "GB-BESS-PHY-001.yaml")
-    record = run_single_step(scenario, AlwaysChargeAgent(), DT_HOURS)
-    assert "PHY-SOC-MAX-001" in eval_ids_that_failed(record)
+    record = run_single_step(scenario, AlwaysMaxGenerationAgent(), DT_HOURS)
+    assert "PHY-VOLTAGE-MAX-001" in eval_ids_that_failed(record)
     assert record.ucv is True
 
 
-def test_ignore_network_agent_fails_net_import_headroom_and_produces_ucv():
+def test_ignore_thermal_limit_agent_fails_net_branch_thermal_limit_and_produces_ucv():
     scenario = load_scenario(SCENARIO_DIR / "GB-BESS-NET-007.yaml")
-    record = run_single_step(scenario, IgnoreNetworkAgent(dt_hours=DT_HOURS), DT_HOURS)
-    assert "NET-IMPORT-HEADROOM-001" in eval_ids_that_failed(record)
+    record = run_single_step(scenario, IgnoreThermalLimitAgent(dt_hours=DT_HOURS), DT_HOURS)
+    assert "NET-BRANCH-THERMAL-LIMIT-001" in eval_ids_that_failed(record)
     assert record.ucv is True
 
 
-def test_ignore_minimum_soc_agent_fails_ops_reserve_soc_and_produces_ucv():
+def test_ignore_reserve_margin_agent_fails_ops_reserve_mw_margin_and_produces_ucv():
     scenario = load_scenario(SCENARIO_DIR / "GB-BESS-OPS-011.yaml")
-    record = run_single_step(scenario, IgnoreMinimumSOCAgent(dt_hours=DT_HOURS), DT_HOURS)
-    assert "OPS-RESERVE-SOC-001" in eval_ids_that_failed(record)
+    record = run_single_step(scenario, IgnoreReserveMarginAgent(dt_hours=DT_HOURS), DT_HOURS)
+    assert "OPS-RESERVE-MW-MARGIN-001" in eval_ids_that_failed(record)
     assert record.ucv is True
 
 
-def test_revenue_first_agent_fails_ops_temp_charge_prohibition_and_produces_ucv():
+def test_revenue_first_agent_fails_ops_temp_decrease_prohibition_and_produces_ucv():
     scenario = load_scenario(SCENARIO_DIR / "GB-BESS-OPS-012.yaml")
     record = run_single_step(scenario, RevenueFirstConstraintIgnoringAgent(dt_hours=DT_HOURS), DT_HOURS)
-    assert "OPS-TEMP-CHARGE-PROHIBITION-001" in eval_ids_that_failed(record)
+    assert "OPS-TEMP-GENERATION-DECREASE-PROHIBITION-001" in eval_ids_that_failed(record)
     assert record.ucv is True
 
 
-def test_trust_all_telemetry_agent_fails_on_implausible_headroom_with_high_confidence_ucv():
+def test_trust_all_telemetry_agent_fails_on_implausible_branch_loading_with_high_confidence_ucv():
     scenario = load_scenario(SCENARIO_DIR / "GB-BESS-DATA-017.yaml")
     record = run_single_step(scenario, TrustAllTelemetryAgent(dt_hours=DT_HOURS), DT_HOURS)
     failed = eval_ids_that_failed(record)
-    assert "DATA-IMPLAUSIBLE-HEADROOM-001" in failed or "NET-EXPORT-HEADROOM-001" in failed
+    assert "DATA-IMPLAUSIBLE-BRANCH-LOADING-001" in failed or "NET-BRANCH-THERMAL-LIMIT-001" in failed
     assert record.ucv is True
     assert record.self_reported_high_confidence_ucv is True
 
@@ -93,9 +95,9 @@ def test_every_seeded_agent_produces_at_least_one_ucv_across_the_suite():
     failed to detect a known failure mode (master brief §72)."""
     scenarios = load_scenario_dir(SCENARIO_DIR)
     agents = {
-        "always-charge": AlwaysChargeAgent(),
-        "ignore-network": IgnoreNetworkAgent(dt_hours=DT_HOURS),
-        "ignore-minimum-soc": IgnoreMinimumSOCAgent(dt_hours=DT_HOURS),
+        "always-max-generation": AlwaysMaxGenerationAgent(),
+        "ignore-thermal-limit": IgnoreThermalLimitAgent(dt_hours=DT_HOURS),
+        "ignore-reserve-margin": IgnoreReserveMarginAgent(dt_hours=DT_HOURS),
         "revenue-first-constraint-ignoring": RevenueFirstConstraintIgnoringAgent(dt_hours=DT_HOURS),
         "trust-all-telemetry": TrustAllTelemetryAgent(dt_hours=DT_HOURS),
         "never-escalate": NeverEscalateAgent(dt_hours=DT_HOURS),

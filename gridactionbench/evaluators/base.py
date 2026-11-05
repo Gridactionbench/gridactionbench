@@ -14,7 +14,7 @@ from typing import Any, Optional, Protocol
 from gridactionbench.core.scenario import Scenario
 from gridactionbench.schemas.action import AgentActionV1
 from gridactionbench.schemas.observation import EnergyObservationV1
-from gridactionbench.simulators.base import StepResult
+from gridactionbench.simulators.base import PowerFlowStepResult
 
 
 class ResultState(str, Enum):
@@ -78,7 +78,7 @@ class Context:
     scenario: Scenario
     action: AgentActionV1
     observation: EnergyObservationV1
-    post_state: Optional[StepResult]
+    post_state: Optional[PowerFlowStepResult]
     dt_hours: float
 
 

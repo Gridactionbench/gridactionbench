@@ -4,6 +4,56 @@ All notable changes to GridActionBench are documented here. Versioning follows `
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased] — Pivot GB-BESS from battery storage to PSS/E-simulated power flow
+
+Replaces the suite's subject system: a single Battery Energy Storage System
+(SOC, charge/discharge efficiency, import/export headroom) becomes a small,
+self-contained, synthetic power-flow network (one slack bus, one generator
+bus, one connecting branch), simulated by Siemens PTI PSS/E via its `psspy`
+Python API. Affects every versioned artifact (`docs/benchmark/VERSIONING.md`):
+suite `0.1.0` → `0.2.0`, scenario set `0.1.0` → `0.2.0`, evaluator set `0.3.0`
+→ `1.0.0` (MAJOR — PHY/NET pass/fail semantics changed for existing IDs),
+simulator `0.1.0` → `1.0.0`. New ADR: `docs/architecture/adr/ADR-018-psse-power-flow-adapter.md`,
+superseding `ADR-003-simulator-abstraction.md`. **All 20 hand-authored
+scenarios, all 8 episodes, the parametric generator's 20 templates, all 12
+baseline agents, and every test file were rewritten.** No published results
+exist yet for either version, so no cross-version comparability claim is at
+stake. **156/156 tests pass.**
+
+### Why, and what this does and doesn't verify
+Decided at the project owner's explicit direction, overriding
+`docs/project/PID.md`'s prior caution against scaling past single-asset scope
+before external calibration — recorded as a conscious override in ADR-018,
+not silently dropped. PSS/E is used strictly as an offline load-flow study
+engine against a synthetic, in-memory case (bus voltage genuinely solved via
+`fnsl`; branch loading computed from a declared linear sensitivity, not a
+line-flow call — see ADR-018 for why) — never a live grid connection, so
+`docs/architecture/adr/ADR-015-physical-system-isolation.md`'s constraint is
+unaffected. **No licensed PSS/E installation exists in this project's own
+environment.** `psspy_client.py` was written against PSS/E's documented API
+shape and has been exercised only against a fake double
+(`tests/fakes/fake_psspy.py`, this repo's first `conftest.py`) — real-PSS/E
+numerical correctness is unverified, and a Python/`psspy` version-compatibility
+risk (this repo targets Python >=3.11; `psspy` has historically shipped tied
+to older bundled interpreters) is unresolved. Both are stated in ADR-018 and
+`docs/benchmark/BENCHMARK_CARD.md`, not hidden.
+
+### Changed
+- **Schemas** (`gridactionbench/schemas/observation.py`, `action.py`): `BatteryState`/`NetworkState` → `NetworkModel` (`Bus`, `Branch`, `Generator`, with signed `sensitivity_mva_per_mw`/`baseline_mva` and `voltage_sensitivity_pu_per_mw` fields — offline-study-style distribution factors, not `psspy` inputs). `CHARGE`/`DISCHARGE` collapsed into one `SET_GENERATION(bus_id, mw)` action (`mw` is an absolute setpoint, not a delta) — a real, acknowledged narrowing: `MKT-PREFERRED-ACTION-001` can no longer distinguish direction from action type alone.
+- **Simulator**: `SimpleBessSimulator` → `PSSESimulatorAdapter` + `psspy_client.py` (the only module that imports `psspy`, lazily). `StepResult` (resulting SOC, energy delta) → `PowerFlowStepResult` (bus voltages, branch loadings, generator outputs, convergence flag).
+- **Evaluators**: PHY's 6 (SOC/rate/energy-availability formulas) → 6 new (voltage ceiling/floor, nameplate limits, ramp up/down). NET's 2 (import/export headroom) consolidated into 1, `NET-BRANCH-THERMAL-LIMIT-001` (one action type means a resulting overload is the same check regardless of direction; direction is recovered via signed sensitivity). OPS/DATA: field renames only (`soc`→`voltage`, `network_headroom`→`branch_loading`), logic unchanged. HUM/ADV/MKT: **zero code changes** — confirmed to have no battery/network field coupling at all before this pass began.
+- **`core/economics.py`**: boundary-value computation re-derived for generator dispatch (increase earns at positive price, decrease avoids cost at negative price — the direct analogue of the former CHARGE/DISCHARGE economics); the former exact SOC-inversion closed form has no power-flow equivalent, so the new version is a documented simplification (exactly one agent-controllable generator considered), not a silently narrower one.
+- **All 20 scenario YAMLs + `scripts/backfill_scenarios.py`**: regenerated against the new schema, each scenario's physical narrative intent preserved (see `docs/suites/gb-bess/SCENARIO_CATALOGUE.md`'s per-scenario mapping) and independently re-verified to produce its intended evaluator PASS/FAIL outcome.
+- **8 episodes** (`gridactionbench/scenarios/gb_bess/episodes.py`): same translation; one, EP-008, lost its original mechanistic proof (finite battery stored-energy scarcity has no power-flow analogue) and now tests the same DECIDE/timing-preference capability via the declarative `preferred_actions` mechanism alone — stated explicitly in that module's docstring, not silently weakened. Measured (not designed-in) revenue comparison: RuleBasedAgent 75 GBP vs. MpcLookaheadAgent 1500 GBP.
+- **Parametric generator** (`gridactionbench/scenarios/generator.py`): all 20 templates retranslated; `_price_preferred_action` documents the same MKT direction-blindness as above.
+- **All 12 baseline agents**: rewritten against the new schema; 3 seeded-failure agents renamed for accuracy (`always_charge`→`always_max_generation`, `ignore_minimum_soc`→`ignore_reserve_margin`, `ignore_network`→`ignore_thermal_limit`); `always_idle`/`always_escalate`/`never_escalate` needed no logic changes (confirmed zero battery-field coupling).
+- **`gridactionbench/holdouts/acceptance.py`**: sensitivity-perturbation check now compares the full parsed action (not just `.action`), since `SET_GENERATION` covers both former directions and a same-type action's `mw` flipping sign across the price=0 crossover is exactly what this check exists to catch.
+- **`core/decision_record.py`**: `simulator_post_state`'s nested dicts now stringify bus/branch-id keys at serialization time — found via a real JSONL round-trip test failure (int keys silently became string keys after a JSON round-trip but not in-process, a genuine bug this pivot introduced and then caught).
+- **Docs**: `docs/suites/gb-bess/SPECIFICATION.md`, `EVALUATION_SPEC.md`, `SCENARIO_CATALOGUE.md` fully rewritten; `docs/benchmark/BENCHMARK_CARD.md`'s now-false "not a power-flow solver" claim corrected; `docs/architecture/ARCHITECTURE.md`/`DATA_MODEL.md`/`DOMAIN_MODEL.md` updated at their battery-specific illustrations.
+
+### Not changed
+- `core/validator.py`, `reporting/report.py`, `evaluators/base.py`'s enums, the Capability/stress-dimension taxonomies, and the Oracle/Observation architectural separation — all confirmed domain-agnostic before this pass began and verified to need no changes.
+
 ## [Unreleased] — Fix two scoring/test-coverage bugs
 
 Fixes two bugs found during internal review: one in economic scoring, one in an episode failure-signature check with a gap in what it detected. **158/158 tests pass** (152 unchanged + 6 new).

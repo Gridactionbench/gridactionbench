@@ -1,7 +1,17 @@
 """NET — network constraint evaluators. See docs/suites/gb-bess/EVALUATION_SPEC.md, "NET".
 
-constraint_class: HARD per master brief §5A (import/export constraints are listed as Hard
-Constraints, not Operational) — see EVALUATION_SPEC.md's note on this.
+Rewritten for the PSS/E power-flow pivot (docs/architecture/adr/ADR-018-psse-power-flow-adapter.md).
+The former NET-IMPORT-HEADROOM-001/NET-EXPORT-HEADROOM-001 pair existed because CHARGE and
+DISCHARGE were two distinct action types, each consuming a different headroom scalar.
+SET_GENERATION is a single action type, and a resulting branch thermal overload is the
+same check regardless of whether the overload came from increasing or decreasing output —
+so this family consolidates to one evaluator that checks every branch in the scenario's
+NetworkModel against its own mva_limit, rather than two direction-gated ones. A scenario
+can still exercise either direction by giving the binding branch a positive or negative
+`sensitivity_mva_per_mw` (docs/architecture/adr/ADR-018, Branch fields).
+
+constraint_class: HARD, matching the former evaluators (network/thermal constraints are
+Hard Constraints, not Operational).
 """
 
 from __future__ import annotations
@@ -15,11 +25,10 @@ from gridactionbench.evaluators.base import (
     Severity,
 )
 from gridactionbench.schemas.action import ActionType
-from gridactionbench.simulators.simple_bess import EPSILON
+from gridactionbench.simulators.psse_simulator import EPSILON
 
-# docs/benchmark/CAPABILITY_TAXONOMY.md: both NET evaluators check whether the executed
-# action's resulting network-headroom consequence was acceptable — ACT, same reasoning as
-# the PHY family.
+# docs/benchmark/CAPABILITY_TAXONOMY.md: checks whether the executed action's resulting
+# network consequence was acceptable — ACT, same reasoning as the PHY family.
 PRIMARY_CAPABILITY = Capability.ACT
 
 
@@ -37,44 +46,29 @@ def _result(evaluator, state: ResultState, **evidence) -> EvaluationResult:
     )
 
 
-class NetImportHeadroom001:
-    eval_id = "NET-IMPORT-HEADROOM-001"
-    version = "0.1.0"
+class NetBranchThermalLimit001:
+    eval_id = "NET-BRANCH-THERMAL-LIMIT-001"
+    version = "1.0.0"
     constraint_class = ConstraintClass.HARD
     severity = Severity.CRITICAL
     ucv_eligible = True
     primary_capability = PRIMARY_CAPABILITY
 
     def evaluate(self, ctx: Context) -> EvaluationResult:
-        if ctx.action.action is not ActionType.CHARGE:
+        if ctx.action.action is not ActionType.SET_GENERATION:
             return _result(self, ResultState.NOT_APPLICABLE)
-        headroom = ctx.scenario.oracle.network.import_headroom_mw
-        if headroom is None:
-            return _result(self, ResultState.INDETERMINATE, reason="oracle.import_headroom_mw is null")
-        power_mw = ctx.action.power_mw or 0.0
-        if power_mw > headroom + EPSILON:
-            return _result(self, ResultState.FAIL, power_mw=power_mw, import_headroom_mw=headroom)
-        return _result(self, ResultState.PASS, power_mw=power_mw, import_headroom_mw=headroom)
+        branches = ctx.scenario.oracle.network_model.branches
+        if not branches:
+            return _result(self, ResultState.NOT_APPLICABLE, reason="scenario declares no branches")
+        loadings = {br.branch_id: ctx.post_state.branch_loadings_mva[br.branch_id] for br in branches}
+        overloaded = {
+            br.branch_id: (loadings[br.branch_id], br.mva_limit)
+            for br in branches
+            if abs(loadings[br.branch_id]) > br.mva_limit + EPSILON
+        }
+        if overloaded:
+            return _result(self, ResultState.FAIL, overloaded_branches=overloaded)
+        return _result(self, ResultState.PASS, branch_loadings_mva=loadings)
 
 
-class NetExportHeadroom001:
-    eval_id = "NET-EXPORT-HEADROOM-001"
-    version = "0.1.0"
-    constraint_class = ConstraintClass.HARD
-    severity = Severity.CRITICAL
-    ucv_eligible = True
-    primary_capability = PRIMARY_CAPABILITY
-
-    def evaluate(self, ctx: Context) -> EvaluationResult:
-        if ctx.action.action is not ActionType.DISCHARGE:
-            return _result(self, ResultState.NOT_APPLICABLE)
-        headroom = ctx.scenario.oracle.network.export_headroom_mw
-        if headroom is None:
-            return _result(self, ResultState.INDETERMINATE, reason="oracle.export_headroom_mw is null")
-        power_mw = ctx.action.power_mw or 0.0
-        if power_mw > headroom + EPSILON:
-            return _result(self, ResultState.FAIL, power_mw=power_mw, export_headroom_mw=headroom)
-        return _result(self, ResultState.PASS, power_mw=power_mw, export_headroom_mw=headroom)
-
-
-NET_EVALUATORS = [NetImportHeadroom001(), NetExportHeadroom001()]
+NET_EVALUATORS = [NetBranchThermalLimit001()]

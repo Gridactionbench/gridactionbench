@@ -1,8 +1,10 @@
 """AgentActionV1 — the agent-produced schema.
 
 Field listing, validation rules: docs/suites/gb-bess/SPECIFICATION.md §3.
-Sign convention: docs/suites/gb-bess/SPECIFICATION.md §9.2 — power_mw is always
-non-negative; direction comes from `action`, never from the sign of power_mw.
+Replaces the single-battery CHARGE/DISCHARGE action pair with SET_GENERATION, a dispatch
+setpoint on one generator within the scenario's NetworkModel — see
+docs/architecture/adr/ADR-018-psse-power-flow-adapter.md. `mw` is the requested absolute
+generator output setpoint (always non-negative), not a delta.
 Confidence: self-reported and uncalibrated — see docs/benchmark/SPECIFICATION.md §8 and
 docs/benchmark/METHODOLOGY.md §4. Never used to determine a pass/fail verdict.
 """
@@ -16,19 +18,14 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ActionType(str, Enum):
-    CHARGE = "CHARGE"
-    DISCHARGE = "DISCHARGE"
+    SET_GENERATION = "SET_GENERATION"
     IDLE = "IDLE"
     ESCALATE = "ESCALATE"
 
 
 class ReasonCode(str, Enum):
-    """Machine-readable ESCALATE reason codes.
-
-    Compiled from docs/suites/gb-bess/SPECIFICATION.md §3's base set plus the codes used
-    across docs/suites/gb-bess/SCENARIO_CATALOGUE.md's 20 initial scenarios. Free text alone
-    is never sufficient for ESCALATE (SPECIFICATION.md §3).
-    """
+    """Machine-readable ESCALATE reason codes. Free text alone is never sufficient for
+    ESCALATE (SPECIFICATION.md §3)."""
 
     TELEMETRY_CONFLICT = "TELEMETRY_CONFLICT"
     MISSING_CRITICAL_DATA = "MISSING_CRITICAL_DATA"
@@ -47,35 +44,25 @@ class AgentActionV1(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     action: ActionType
-    power_mw: Optional[float] = None
+    bus_id: Optional[int] = None
+    mw: Optional[float] = None
     reason_code: Optional[ReasonCode] = None
     confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
     optional_explanation: Optional[str] = None
 
-    # Populated by the runner post-validation, not by the agent itself — flags a
-    # zero-power CHARGE/DISCHARGE as a schema irregularity per SPECIFICATION.md §9.8,
-    # without treating it as schema_valid=False (zero is a valid float, not malformed).
-    zero_power_irregularity: bool = False
-
     @model_validator(mode="after")
     def _validate_action_rules(self) -> "AgentActionV1":
-        if self.power_mw is not None and self.power_mw < 0.0:
-            raise ValueError(
-                "power_mw must be non-negative (SPECIFICATION.md §9.2): direction comes "
-                "from `action`, never from the sign of power_mw."
-            )
+        if self.mw is not None and self.mw < 0.0:
+            raise ValueError("mw must be non-negative: it is an absolute generator setpoint.")
 
-        if self.action in (ActionType.CHARGE, ActionType.DISCHARGE):
-            if self.power_mw is None:
-                raise ValueError(f"{self.action} requires a present power_mw.")
-            if self.power_mw == 0.0:
-                self.zero_power_irregularity = True
+        if self.action is ActionType.SET_GENERATION:
+            if self.bus_id is None or self.mw is None:
+                raise ValueError("SET_GENERATION requires both bus_id and mw to be present.")
 
         elif self.action is ActionType.IDLE:
-            if self.power_mw not in (None, 0.0):
+            if self.bus_id is not None or self.mw is not None:
                 raise ValueError(
-                    "IDLE must not request meaningful power (any non-zero power_mw on "
-                    "IDLE is a schema violation)."
+                    "IDLE must not request a generation change (bus_id/mw must be absent)."
                 )
 
         elif self.action is ActionType.ESCALATE:

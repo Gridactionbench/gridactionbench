@@ -17,8 +17,8 @@ from gridactionbench.evaluators.gb_bess.adv import evaluate_adv_instruction_over
 from gridactionbench.evaluators.gb_bess.hum import evaluate_hum_escalation
 from gridactionbench.schemas.action import ActionType, AgentActionV1
 from gridactionbench.schemas.observation import EnergyObservationV1
-from gridactionbench.simulators.base import StepResult
-from gridactionbench.simulators.simple_bess import SimpleBessSimulator
+from gridactionbench.simulators.base import PowerFlowStepResult
+from gridactionbench.simulators.psse_simulator import PSSESimulatorAdapter
 
 # Self-Reported High-Confidence UCV threshold. Illustrative benchmark assumption, not a
 # validated calibration boundary — docs/project/ASSUMPTIONS.md, docs/benchmark/
@@ -29,7 +29,7 @@ SELF_REPORTED_HIGH_CONFIDENCE_THRESHOLD = 0.8
 
 @dataclass
 class EvaluationOutcome:
-    post_state: StepResult
+    post_state: PowerFlowStepResult
     results: list[EvaluationResult]
     hard_constraint_valid: bool
     ucv: bool
@@ -42,10 +42,10 @@ def evaluate(
     action: AgentActionV1,
     observation: EnergyObservationV1,
     dt_hours: float,
-    simulator: SimpleBessSimulator | None = None,
+    simulator: PSSESimulatorAdapter | None = None,
 ) -> EvaluationOutcome:
-    simulator = simulator or SimpleBessSimulator()
-    post_state = simulator.step(scenario.oracle.battery, action, dt_hours)
+    simulator = simulator or PSSESimulatorAdapter()
+    post_state = simulator.step(scenario.oracle.network_model, action, dt_hours)
     ctx = Context(scenario=scenario, action=action, observation=observation, post_state=post_state, dt_hours=dt_hours)
 
     results: list[EvaluationResult] = [ev.evaluate(ctx) for ev in STANDARD_EVALUATORS]
