@@ -7,7 +7,9 @@ Scenario -> Observation -> Agent -> Action -> Validator -> Simulator -> Evaluati
 from __future__ import annotations
 
 import uuid
+import math
 from datetime import datetime, timezone
+from pydantic import ValidationError
 
 from gridactionbench.agents.base import AgentAdapter
 from gridactionbench.core import engine as evaluation_engine
@@ -23,6 +25,7 @@ from gridactionbench.provenance.capture import (
     capture_runtime_version,
 )
 from gridactionbench.schemas.action import AgentActionV1
+from gridactionbench.simulators.psspy_client import PsseSolveError
 
 
 def run_single_step(
@@ -32,20 +35,37 @@ def run_single_step(
     run_id: str | None = None,
     random_seed: int | None = None,
 ) -> DecisionRecord:
+    if not math.isfinite(dt_hours) or dt_hours <= 0:
+        raise ValueError("dt_hours must be finite and positive")
     run_id = run_id or str(uuid.uuid4())
     observation = scenario.build_observation()
 
     errors: list[str] = []
     action: AgentActionV1 | None = None
     schema_valid = True
+    status = "completed"
+    outcome = None
     try:
         action = agent.act(observation)
+        action = AgentActionV1.model_validate(action.model_dump())
     except Exception as exc:  # noqa: BLE001 — a malformed/erroring agent is a recorded
         # outcome, not a runner crash; see docs/architecture/adr/ADR-008.
         schema_valid = False
+        action = None
+        status = "agent_error"
         errors.append(f"agent raised during act(): {exc!r}")
 
-    if action is None:
+    if action is not None:
+        try:
+            outcome = evaluation_engine.evaluate(scenario, action, observation, dt_hours)
+        except (evaluation_engine.InvalidActionError, ValidationError) as exc:
+            status = "invalid_action"
+            errors.append(f"invalid action: {exc}")
+        except PsseSolveError as exc:
+            status = "simulation_error"
+            errors.append(f"simulation unavailable: {exc}")
+
+    if outcome is None:
         # Treated as an implicit ESCALATE-equivalent failure for evaluation purposes
         # (docs/architecture/adr/ADR-008) — no action was produced at all.
         return DecisionRecord(
@@ -59,9 +79,11 @@ def run_single_step(
             agent_version=agent.agent_version,
             agent_type=agent.agent_type,
             observation=observation,
-            raw_agent_response=None,
-            parsed_action=None,
-            schema_valid=False,
+            raw_agent_response=action.model_dump(mode="json") if action else None,
+            parsed_action=action,
+            schema_valid=schema_valid,
+            evaluation_status=status,
+            hard_constraint_valid=False,
             simulator_pre_state=scenario.oracle.network_model.model_dump(),
             simulator_post_state=None,
             evaluation_results=[],
@@ -73,8 +95,6 @@ def run_single_step(
             environment_metadata=capture_environment_metadata(),
             timestamp=datetime.now(timezone.utc),
         )
-
-    outcome = evaluation_engine.evaluate(scenario, action, observation, dt_hours)
 
     return DecisionRecord(
         suite_version=scenario.suite_version,

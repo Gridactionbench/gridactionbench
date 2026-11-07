@@ -134,9 +134,9 @@ def test_sandboxed_agent_adapter_calls_incident_callback_instead_of_raising_when
 # --- DockerSandboxBackend: the parts testable without a real Docker daemon ---
 
 
-def test_docker_backend_raises_cleanly_when_docker_is_not_installed():
-    # This environment genuinely has no Docker installed — a real, not simulated, check
-    # of the "fail clearly, don't silently no-op" path.
+def test_docker_backend_raises_cleanly_when_docker_is_not_installed(monkeypatch):
+    monkeypatch.setattr("gridactionbench.agents.docker_backend.shutil.which", lambda name: None)
+    # Force this path even on CI hosts with Docker installed.
     backend = DockerSandboxBackend(image="example/agent:latest")
     with pytest.raises(SandboxBackendError, match="docker is not installed"):
         backend.run(AgentActionV1(action=ActionType.IDLE).model_dump_json(), SandboxConfig())

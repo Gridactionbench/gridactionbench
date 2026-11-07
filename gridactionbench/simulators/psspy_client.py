@@ -125,7 +125,8 @@ def solve() -> bool:
     case converged."""
     psspy = _get_psspy()
     ierr = psspy.fnsl([0, 0, 0, 1, 1, 0, 99, 0])
-    return ierr == _PSSPY_OK
+    # API success alone must not be treated as numerical convergence.
+    return ierr == _PSSPY_OK and psspy.solved() == _PSSPY_OK
 
 
 def read_bus_voltages(bus_ids: list[int]) -> dict[int, float]:

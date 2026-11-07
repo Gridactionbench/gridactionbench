@@ -1,76 +1,96 @@
-# GridActionBench
+﻿# GridActionBench
 
-**An open benchmark for evaluating the reliability boundaries of autonomous AI agents acting in dynamic energy systems.**
+GridActionBench is an open-source research benchmark for evaluating AI agents making decisions in simulated power systems. The current direction uses Siemens PSS®E through its `psspy` Python API for offline power-flow studies on small synthetic networks.
 
-> Do not just evaluate what an AI says. Evaluate what happens if you let it act.
+Agents receive a structured observation and return a generator setpoint, an idle action, or an escalation. The harness evaluates constraint adherence, information handling, escalation, adversarial resilience, and economic decision quality, with results recorded separately by dimension.
 
-GridActionBench measures how agents **perceive, decide, act, adapt, and escalate** as system complexity, operational uncertainty, and autonomy burden increase (`docs/benchmark/RELIABILITY_BOUNDARY_MODEL.md`). The first environment, **GB-BESS v0.1**, evaluates a simulated grid-connected Battery Energy Storage System in a Great Britain electricity-system context — one deliberately narrow rung of a larger planned complexity progression, not the project's permanent scope.
+## Status and scope
 
-It's an open-source research project — not a SaaS product, certification system, or government benchmark, and runs independently of any proprietary platform or DESNZ/Ofgem/NESO endorsement. See `docs/research/PRIOR_ART.md` for related work.
+The repository contains a Python library, CLI, synthetic scenarios, reference agents, evaluators, scenario generation, multi-step episodes, and result reporting. The power-flow model replaces the earlier battery energy storage model. Existing `gb_bess` package names, `GB-BESS-*` scenario identifiers, and the `suites/gb_bess/v0_1/` directory remain for continuity; the bundled scenario files declare suite version `0.2.0`.
 
-## Status
+The PSS®E integration is under development:
 
-Phase 1-3 implementation in progress. Core pipeline implemented and running: schemas, simulator, 20 evaluators, 4 reference agents, 8 seeded-failure agents, a parameterised generator (20 templates, 300 instances), 8 episodes, Decision/Trajectory Record writers, reporting, and a CLI — **152 passing tests**. All current agents are deterministic built-in baselines; no LLM has yet been evaluated against GB-BESS. See `docs/project/DEFINITION_OF_DONE.md` for release-gate status and `docs/benchmark/CALIBRATION_RESULTS.md` for current output.
+- The adapter has been tested against a fake `psspy` implementation, not a licensed PSS®E installation. API compatibility and numerical correctness on real PSS®E remain unverified.
+- Bus voltages use the PSS®E solve path. Branch loading uses declared linear sensitivities and generator output, rather than solved PSS®E branch flows.
+- The synthetic case is a simplified network model, not a validated representation of an operational grid. Scenarios are marked `DRAFT`.
+- Docker-based agent isolation is implemented but has not been validated against a real Docker daemon in the project's development environment.
+
+This is an offline simulation environment. It contains no integration for controlling physical energy assets or submitting operational market bids. See the [security policy](SECURITY.md) and the [power-flow adapter decision](docs/architecture/adr/ADR-018-psse-power-flow-adapter.md).
+
+## Installation
+
+The harness requires Python 3.11 or later. From a source checkout, create and activate a virtual environment, then install:
 
 ```bash
-pip install -e .
+python -m pip install -e ".[dev]"
+```
+
+Running simulations additionally requires a separately licensed PSS®E installation with `psspy` importable by the Python interpreter running the harness. Confirm interpreter compatibility with your installed PSS®E release; the project's Python requirement alone does not establish that compatibility. PSS®E and `psspy` are not distributed with this repository or installed by pip as project dependencies.
+
+For reproducible development, use `uv sync --locked --extra dev` with [uv.lock](uv.lock). The [requirements file](requirements-lock.txt) is a generated export for pip users. See [runtime validation](docs/testing/RUNTIME_VALIDATION.md) for dependency updates, CI checks, and the remaining release gates.
+
+## Usage
+
+Inspect the CLI and bundled scenarios without PSS®E:
+
+```bash
+gridactionbench --help
+gridactionbench list-scenarios suites/gb_bess/v0_1/scenarios
+gridactionbench coverage
+```
+
+With a compatible, licensed PSS®E environment configured:
+
+```bash
 gridactionbench run suites/gb_bess/v0_1/scenarios --agent rule-based
+gridactionbench run-generated --agent rule-based --n-per-template 15 --seed 42
 ```
 
-## Physical-system scope
+Use `--output runs/decisions.jsonl` with `run` to save Decision Records. These records include observations, ground truth, evaluator evidence, and provenance; review them before publishing results from private scenarios.
 
-GB-BESS v0.1 is simulation-only — it cannot interact with physical energy assets. See `SECURITY.md`.
+The CLI currently selects built-in agents. External agents can use the Python adapter interfaces; see the [agent sandbox decision](docs/architecture/adr/ADR-019-agent-execution-sandbox.md) and [sandbox setup](scripts/sandbox/README.md) for the experimental Docker backend.
 
-## Core idea
+## Development and testing
+
+```bash
+python -m pytest -q
+```
+
+The test suite injects a fake `psspy` module automatically, so it runs without PSS®E. Passing tests verify harness behavior against that double; they do not establish real solver accuracy or Docker isolation. See the [test strategy](docs/testing/TEST_STRATEGY.md).
+
+## Evaluation model
 
 ```text
-Scenario -> Oracle -> Observation -> Agent -> Action -> Validator -> Simulator
-   -> Evaluation -> Decision Record -> Report
+Scenario -> Observation -> Agent -> Structured action
+         -> Simulation and evaluation -> Decision record -> Report
 ```
 
-Ground truth (Oracle) and what the agent observes (Observation) are kept strictly separate, so the benchmark tests behaviour under missing, stale, contradictory, or adversarial information — not just correctness given perfect information. Results are reported as independent dimensions (constraint adherence, data-quality handling, adversarial resilience, escalation quality, economic decision quality, UCV counts) — never a single opaque score. See `docs/benchmark/SPECIFICATION.md` and `docs/benchmark/SCORING.md`.
+The evaluator uses scenario ground truth separately from the agent-visible observation. Scenarios can introduce missing, stale, conflicting, or adversarial information. Single-step runs produce Decision Records; multi-step episodes also support Trajectory Records. Results are reported by dimension rather than combined into a single score.
 
-This is the **Atomic** case of a broader Task/Trial/Trajectory model spanning Atomic → Sequential → Operational task modes, across five capabilities (**Perceive, Decide, Act, Adapt, Escalate**) and three stress dimensions (**System Complexity, Operational Uncertainty, Autonomy Burden**). See `docs/benchmark/TASK_MODEL.md`.
-
-## Repository structure
+## Repository layout
 
 ```text
-docs/            specification, research, architecture, project, and testing documentation
-gridactionbench/ core library: schemas, simulator, evaluators, runner, reporting, CLI
-baselines/       reference agents and 8 seeded-failure agents
-suites/gb_bess/  GB-BESS scenario data — all 20 initial scenarios
-data/            synthetic data and manifests
-tests/           unit, integration, golden, reproducibility tests
-scripts/         one-off utilities
+gridactionbench/  schemas, simulation adapters, evaluation, runners, reporting, CLI
+baselines/        reference agents and deliberately failing agents
+suites/gb_bess/   synthetic power-flow scenarios under legacy suite names
+tests/            unit, integration, golden, and reproducibility tests
+scripts/          scenario utilities and experimental sandbox infrastructure
+docs/             methodology, specifications, architecture, and project documentation
 ```
 
-## Key documents
+## Documentation and contributions
 
-| Document | What it covers |
-|---|---|
-| `docs/benchmark/RELIABILITY_BOUNDARY_MODEL.md` | The central research question |
-| `docs/benchmark/TASK_MODEL.md` | Task / Trial / Trajectory ontology |
-| `docs/benchmark/CAPABILITY_TAXONOMY.md` | Perceive / Decide / Act / Adapt / Escalate |
-| `docs/benchmark/STRESS_DIMENSIONS.md` | Complexity / Uncertainty / Autonomy Burden |
-| `docs/benchmark/VALIDATION_FRAMEWORK.md` | Validity, sensitivity, discrimination, stability |
-| `docs/benchmark/BENCHMARK_CARD.md` | Purpose, intended use, limitations |
-| `docs/benchmark/SPECIFICATION.md` | Core architecture and methodology |
-| `docs/suites/gb-bess/SPECIFICATION.md` | GB-BESS schemas, constraints, simulator |
-| `docs/suites/gb-bess/SCENARIO_CATALOGUE.md` | The 20 scenarios and 8 episode designs |
-| `docs/suites/gb-bess/EVALUATION_SPEC.md` | The evaluator catalogue |
-| `docs/benchmark/CALIBRATION_RESULTS.md` | Agent output against the 20 scenarios |
-| `docs/benchmark/CROSS_MODE_COMPARISON.md` | Atomic vs. Operational performance |
-| `docs/benchmark/PUBLIC_PRIVATE_POLICY.md` | Public/private split and holdout generation |
-| `docs/suites/gb-bess/SCENARIO_TEMPLATES.md` | The parameterised scenario generator |
-| `docs/project/DEFINITION_OF_DONE.md` | The five evidence-based release gates |
-| `docs/research/PRIOR_ART.md` | Related work and differentiation |
-| `docs/architecture/adr/` | Architecture decision records |
-| `GOVERNANCE.md`, `CONTRIBUTING.md` | How to participate |
+- [Benchmark specification](docs/benchmark/SPECIFICATION.md) and [scoring](docs/benchmark/SCORING.md)
+- [Reliability boundary model](docs/benchmark/RELIABILITY_BOUNDARY_MODEL.md) and [task model](docs/benchmark/TASK_MODEL.md)
+- [Suite specification](docs/suites/gb-bess/SPECIFICATION.md) and [evaluation specification](docs/suites/gb-bess/EVALUATION_SPEC.md)
+- [PSS®E migration decision and limitations](docs/architecture/adr/ADR-018-psse-power-flow-adapter.md)
+- [Public/private evaluation policy](docs/benchmark/PUBLIC_PRIVATE_POLICY.md)
+- [Contributing](CONTRIBUTING.md), [governance](GOVERNANCE.md), and [code of conduct](CODE_OF_CONDUCT.md)
 
-## License
+Some planning documents and historical results still describe the earlier battery model. They should not be treated as validation of the current power-flow implementation.
 
-Code: Apache License 2.0 (`LICENSE`). Data: see `DATA_LICENSES.md` — GB-BESS v0.1 uses synthetic data only.
+## License and citation
 
-## Citation
+Project code and contributor-authored synthetic scenarios are licensed under [Apache License 2.0](LICENSE); see [data licensing](DATA_LICENSES.md) for details. PSS®E is proprietary software subject to its own license.
 
-See `CITATION.cff`.
+Citation metadata is available in [CITATION.cff](CITATION.cff). Include the commit and component versions used when reporting results.

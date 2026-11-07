@@ -18,7 +18,9 @@ from tests.fakes.fake_psspy import FakePsspy
 
 
 @pytest.fixture(autouse=True)
-def fake_psspy(monkeypatch: pytest.MonkeyPatch) -> FakePsspy:
+def fake_psspy(monkeypatch: pytest.MonkeyPatch, request) -> FakePsspy | None:
+    if request.node.get_closest_marker("psse"):
+        return None
     fake = FakePsspy()
     monkeypatch.setitem(sys.modules, "psspy", fake)
     return fake

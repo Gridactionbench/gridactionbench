@@ -39,37 +39,23 @@ Any pull request introducing a new `SimulatorAdapter`, a new dependency with net
 
 ## Agent Execution Sandbox
 
-**The guarantee:** an evaluated agent (any LLM-backed, tool-using, or third-party
-submission) cannot leak held-out scenario or ground-truth data out of an evaluation run,
-and cannot reach the open internet to look up an answer externally instead of reasoning
-over the observation it was actually given. See
-`docs/architecture/adr/ADR-019-agent-execution-sandbox.md` for the full decision record —
-summarized here:
+The experimental sandbox passes observation JSON to an isolated agent and validates
+its returned action JSON. It uses no host-path mounts, defaults to no networking,
+bounds captured output, applies resource limits, and removes per-run resources
+explicitly. Configuration excludes private evaluation environment variables and
+cannot be changed after validation.
 
-- **Who needs it:** reference/baseline agents (`always_idle`, `always_escalate`,
-  `rule_based`, `mpc_lookahead`, the seeded-failure agents) are maintainer-authored,
-  deterministic, and confirmed to make zero network calls — they run in-process, as
-  today. Only evaluated/untrusted agents need sandboxing, and specifically whenever run
-  against held-out content.
-- **How:** `gridactionbench/agents/sandboxed.py::SandboxedAgentAdapter` implements the
-  existing `AgentAdapter` protocol unchanged, delegating to `DockerSandboxBackend`
-  (`gridactionbench/agents/docker_backend.py`) — one fresh, ephemeral, capability-dropped,
-  read-only container per invocation, default `--network none`, with a narrow,
-  allowlisted egress path (`scripts/sandbox/`) only when an agent genuinely needs to call
-  its own model provider's API.
-- **What crosses the boundary:** `EnergyObservationV1` JSON in, `AgentActionV1` JSON out
-  — nothing else. The `Scenario`/`Oracle` ground truth is never constructed in a form a
-  sandboxed process could reach. `SandboxConfig` refuses, at construction time, to be
-  built with the private holdout seed or any `GRIDACTIONBENCH_PRIVATE_*` environment
-  variable.
-- **What this does not do:** detect training-data contamination
-  (`docs/benchmark/CONTAMINATION_POLICY.md`'s separate problem), or inspect the content
-  of an otherwise-legitimate request to an *allowed* model-provider host — both stated
-  explicitly as open limitations in ADR-019, not silently assumed away.
+Networked runs verify a canonical proxy policy and create separate networks/proxies
+for each invocation. Proxy errors invalidate the run. Allowed provider requests can
+still contain scenario content; TLS payloads are not inspected. Isolation depends
+on the Docker daemon, kernel, deployment network, and trusted blueprint image.
 
-### Review obligation
+These mechanisms have unit coverage but have not been verified on a real Docker
+host here. They are not a guarantee against holdout extraction. Before running
+untrusted submissions, complete the checks in
+[Runtime validation](../testing/RUNTIME_VALIDATION.md). Keep holdouts, credentials,
+and raw results in separate access-controlled evaluation infrastructure.
 
-Any pull request changing `gridactionbench/agents/sandboxed.py`,
-`gridactionbench/agents/docker_backend.py`, or `scripts/sandbox/` must be reviewed against
-ADR-019 before merge — the same standing obligation as the physical-system-isolation
-review above, for this separate guarantee.
+Changes to the sandbox must be reviewed against
+[ADR-020](adr/ADR-020-execution-hardening.md), which updates the shared-network and
+logging behavior originally described in ADR-019.

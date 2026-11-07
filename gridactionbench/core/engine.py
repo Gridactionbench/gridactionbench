@@ -7,6 +7,7 @@ SPECIFICATION.md §8 for the UCV computation this module implements.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 
 from gridactionbench.core.economics import ObjectiveValueResult, compute_objective_value
 from gridactionbench.core.scenario import Scenario
@@ -19,6 +20,11 @@ from gridactionbench.schemas.action import ActionType, AgentActionV1
 from gridactionbench.schemas.observation import EnergyObservationV1
 from gridactionbench.simulators.base import PowerFlowStepResult
 from gridactionbench.simulators.psse_simulator import PSSESimulatorAdapter
+from gridactionbench.simulators.psspy_client import PsseSolveError
+
+
+class InvalidActionError(ValueError):
+    """The requested target is not part of the scenario network."""
 
 # Self-Reported High-Confidence UCV threshold. Illustrative benchmark assumption, not a
 # validated calibration boundary — docs/project/ASSUMPTIONS.md, docs/benchmark/
@@ -45,7 +51,30 @@ def evaluate(
     simulator: PSSESimulatorAdapter | None = None,
 ) -> EvaluationOutcome:
     simulator = simulator or PSSESimulatorAdapter()
-    post_state = simulator.step(scenario.oracle.network_model, action, dt_hours)
+    if not math.isfinite(dt_hours) or dt_hours <= 0:
+        raise ValueError("dt_hours must be finite and positive")
+    # Revalidate even objects created with model_construct or mutated by in-process agents.
+    action = AgentActionV1.model_validate(action.model_dump())
+    if action.action is ActionType.SET_GENERATION:
+        if action.bus_id not in {g.bus_id for g in scenario.oracle.network_model.generators}:
+            raise InvalidActionError("requested generator bus does not exist in the scenario")
+    try:
+        post_state = simulator.step(scenario.oracle.network_model, action, dt_hours)
+    except PsseSolveError:
+        raise
+    except Exception as exc:
+        # A vendor API/version mismatch is an unavailable evaluation, not an agent score.
+        raise PsseSolveError(f"power-flow adapter failed ({type(exc).__name__})") from exc
+    if not post_state.converged:
+        raise PsseSolveError("power-flow solve did not converge; result is not scoreable")
+    expected = (
+        (post_state.bus_voltages_pu, {b.bus_id for b in scenario.oracle.network_model.buses}),
+        (post_state.branch_loadings_mva, {b.branch_id for b in scenario.oracle.network_model.branches}),
+        (post_state.generator_outputs_mw, {g.bus_id for g in scenario.oracle.network_model.generators}),
+    )
+    if any(set(values) != keys or not all(math.isfinite(v) for v in values.values())
+           for values, keys in expected):
+        raise PsseSolveError("power-flow result contains missing or non-finite values")
     ctx = Context(scenario=scenario, action=action, observation=observation, post_state=post_state, dt_hours=dt_hours)
 
     results: list[EvaluationResult] = [ev.evaluate(ctx) for ev in STANDARD_EVALUATORS]

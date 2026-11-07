@@ -1,5 +1,12 @@
 # Threat Model
 
+Implementation status: the sandbox remains experimental. Its current controls and
+limits are described in [ADR-020](../architecture/adr/ADR-020-execution-hardening.md).
+The table below describes intended mitigations, not a verified guarantee of holdout
+confidentiality. Complete [runtime validation](../testing/RUNTIME_VALIDATION.md) before
+accepting untrusted submissions. Dependencies are now resolved in `uv.lock` and
+checked by the CI audit; this does not eliminate dependency-compromise risk.
+
 **Status:** Draft — Phase 0 (master brief §42)
 
 ## Two distinct categories — do not conflate

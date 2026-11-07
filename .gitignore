@@ -7,6 +7,7 @@ venv/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.uv-cache/
 dist/
 build/
 
@@ -45,3 +46,4 @@ docs/project/RISK_REGISTER.md
 docs/project/GAP_ANALYSIS.md
 docs/research/BENCHMARK_DESIGN_REVIEW.md
 docs/research/DESIGN_EVIDENCE_BASE.md
+docs/research/DESIGN_VALIDATION_REVIEW.md

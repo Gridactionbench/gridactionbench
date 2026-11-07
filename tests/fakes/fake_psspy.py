@@ -82,6 +82,9 @@ class FakePsspy:
             return 1, 0.0
         return 0, self._solved_voltages.get(ibus, self._buses.get(ibus, 0.0))
 
+    def solved(self) -> int:
+        return 0
+
     def macdat(self, ibus: int, machid: str, field: str) -> tuple[int, float]:
         if field != "P":
             return 1, 0.0

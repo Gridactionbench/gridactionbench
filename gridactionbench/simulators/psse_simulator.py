@@ -5,7 +5,7 @@ revision). Orchestrates gridactionbench.simulators.psspy_client; contains no pow
 math of its own and no knowledge of whether the underlying `psspy` is real PSS/E or a test
 double — see psspy_client.py's module docstring for what is and isn't verified.
 
-Simulator version: 1.0.0 (docs/benchmark/VERSIONING.md: MAJOR change from the battery
+Simulator version: 1.1.0 (docs/benchmark/VERSIONING.md: MAJOR change from the battery
 state-transition model to a PSS/E-backed power-flow model).
 
 Determinism: unlike SimpleBessSimulator's exact closed-form arithmetic, PSS/E's
@@ -22,7 +22,7 @@ from gridactionbench.schemas.observation import NetworkModel
 from gridactionbench.simulators import psspy_client
 from gridactionbench.simulators.base import PowerFlowStepResult
 
-SIMULATOR_VERSION = "1.0.0"
+SIMULATOR_VERSION = "1.1.0"
 
 # Floating-point/solver tolerance, fixed by SPECIFICATION.md §9.7. Applied as
 # `value <= limit + EPSILON`, never subtracted from the value side.
@@ -57,6 +57,8 @@ class PSSESimulatorAdapter:
             psspy_client.apply_generation_setpoint(action.bus_id, action.mw)
 
         converged = psspy_client.solve()
+        if not converged:
+            raise psspy_client.PsseSolveError("power-flow solve did not converge")
 
         bus_ids = [b.bus_id for b in network_model.buses]
         gen_bus_ids = [g.bus_id for g in network_model.generators]

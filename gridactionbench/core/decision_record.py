@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -49,6 +49,7 @@ class DecisionRecord(BaseModel):
     raw_agent_response: Optional[dict[str, Any]] = None
     parsed_action: Optional[AgentActionV1] = None
     schema_valid: bool
+    evaluation_status: Literal["completed", "agent_error", "invalid_action", "simulation_error"] = "completed"
     schema_repairs: list[str] = []
 
     simulator_pre_state: dict[str, Any]

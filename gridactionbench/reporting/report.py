@@ -48,6 +48,7 @@ class Report:
     ucv_by_constraint_class: Counter = field(default_factory=Counter)
     self_reported_high_confidence_ucv_count: int = 0
     total_scenarios: int = 0
+    unscoreable_by_status: Counter = field(default_factory=Counter)
     # docs/benchmark/STRESS_DIMENSIONS.md, "How C/U/H metadata should be used once
     # tagged": slicing, not scoring — these never feed a pass/fail verdict, only a
     # breakdown of the same PASS/WARNING/FAIL/UCV counts already computed above.
@@ -113,6 +114,8 @@ def build_report(records: list[DecisionRecord]) -> Report:
         return report.by_capability[name]
 
     for record in records:
+        if record.evaluation_status != "completed":
+            report.unscoreable_by_status[record.evaluation_status] += 1
         if record.ucv:
             report.ucv_count += 1
         if record.self_reported_high_confidence_ucv:
@@ -159,6 +162,8 @@ def build_report(records: list[DecisionRecord]) -> Report:
 
 def render_text(report: Report) -> str:
     lines = []
+    for status, count in sorted(report.unscoreable_by_status.items()):
+        lines.append(f"Unscoreable ({status}): {count} / {report.total_scenarios}")
     for name, dim in sorted(report.dimensions.items()):
         rate = f"{dim.pass_rate * 100:5.1f}%" if dim.pass_rate is not None else "  n/a"
         lines.append(f"{name:<38}{rate}   (n={dim.n})")

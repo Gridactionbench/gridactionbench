@@ -1,5 +1,10 @@
 # GB-BESS v0.2 — Suite Specification
 
+Execution update: framework 0.2.0 / simulator 1.1.0 reject non-finite values,
+invalid references, failed solves, and incomplete solver results. Unscoreable runs
+are recorded separately and cannot advance episodes. See
+[ADR-020](../../architecture/adr/ADR-020-execution-hardening.md).
+
 **Status:** Revised — PSS/E power-flow pivot (`docs/architecture/adr/ADR-018-psse-power-flow-adapter.md`, supersedes `docs/architecture/adr/ADR-003-simulator-abstraction.md`). The subject system, both schemas, the constraint tables, and the reference simulator's frozen conventions (§9) all changed. Nothing here is a patch over the v0.1 battery-storage text — every section below describes the power-flow domain as it actually is in code today.
 **Inherits:** `docs/benchmark/SPECIFICATION.md` (core architecture, domain model, UCV/escalation/counterfactual methodology — read that first)
 

@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
+from gridactionbench import FRAMEWORK_VERSION
 
 from gridactionbench.schemas.observation import (
     EnergyObservationV1,
@@ -124,7 +125,7 @@ class Scenario(BaseModel):
         is this scenario's explicit declaration of exactly how (identity by default).
         """
         base = {
-            "benchmark_version": "0.1.0",
+            "benchmark_version": FRAMEWORK_VERSION,
             "suite_version": self.suite_version,
             "scenario_id": self.scenario_id,
             "timestamp": datetime.now(timezone.utc),

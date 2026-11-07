@@ -1,0 +1,90 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.11', '3.12', '3.13', '3.14']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: '0.13.7'
+      - run: uv sync --locked --extra dev
+      - run: uv run --no-sync python -m pytest -q
+      - run: uv run --no-sync gridactionbench --help
+      - run: uv run --no-sync gridactionbench list-scenarios suites/gb_bess/v0_1/scenarios
+  build-and-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: '0.13.7'
+      - run: uv sync --locked --extra dev --group quality
+      - run: uv export --locked --extra dev --no-emit-project --no-hashes --no-header --output-file requirements-lock.txt
+      - run: git diff --exit-code -- requirements-lock.txt
+      - run: uv run --no-sync pip-audit --local --skip-editable
+      - run: uv run --no-sync python -m build --no-isolation
+      - name: Smoke-test installed wheel
+        run: |
+          uv venv wheel-check
+          uv pip install --python wheel-check/bin/python --constraints requirements-lock.txt dist/*.whl
+          wheel-check/bin/gridactionbench --help
+  docker:
+    # Real-runtime tests are opt-in; never run submissions on a self-hosted PR runner.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: '0.13.7'
+      - run: uv sync --locked --extra dev
+      - run: docker build -t gab-test-agent scripts/sandbox/test_agent
+      - run: uv run --no-sync bash scripts/sandbox/provision_network.sh gab-test-blueprint gab-test-proxy example.com
+      - run: uv run --no-sync python -m pytest -m docker -q
+        env:
+          GRIDACTIONBENCH_DOCKER_TEST_IMAGE: gab-test-agent
+          GRIDACTIONBENCH_TEST_EGRESS_NETWORK: gab-test-blueprint
+          GRIDACTIONBENCH_TEST_EGRESS_PROXY: gab-test-proxy
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: 'false'
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: 'false'
+          GITLEAKS_ENABLE_SUMMARY: 'true'
