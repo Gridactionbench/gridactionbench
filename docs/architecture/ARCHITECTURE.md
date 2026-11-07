@@ -27,7 +27,7 @@ This mirrors `docs/benchmark/SPECIFICATION.md` §1 exactly; this document descri
 gridactionbench/
 ├── core/         # Scenario, Oracle, DecisionRecord data model classes; run orchestration
 ├── schemas/       # EnergyObservationV1, AgentActionV1 — versioned, validated schema definitions
-├── simulators/    # SimulatorAdapter interface + SimpleBessSimulator implementation
+├── simulators/    # SimulatorAdapter interface + PSSESimulatorAdapter implementation (psspy_client.py isolates the psspy import)
 ├── evaluators/    # Evaluator interface + one module per catalogue entry (PHY, NET, OPS, DATA, ADV, HUM)
 ├── scenarios/     # scenario loading, validation, and (Phase 3) template-based generation
 ├── agents/        # AgentAdapter interface + reference agents (AlwaysIdle, AlwaysEscalate, RuleBased, LLMStructured) + seeded failure agents
@@ -40,7 +40,7 @@ gridactionbench/
 
 ### `SimulatorAdapter`
 
-The simulator boundary is an interface, not a concrete class reference, from day one — see `docs/architecture/adr/ADR-003-simulator-abstraction.md`. `SimpleBessSimulator` is the only implementation shipped in v0.1; the interface exists so a future PyPSA-, PandaPower-, or Grid2Op-backed adapter (see `docs/research/PRIOR_ART.md` §7) could be added later without redesigning the benchmark core, not because multiple simulators are needed now.
+The simulator boundary is an interface, not a concrete class reference, from day one — see `docs/architecture/adr/ADR-018-psse-power-flow-adapter.md` (supersedes `docs/architecture/adr/ADR-003-simulator-abstraction.md`). `PSSESimulatorAdapter` (backed by Siemens PTI PSS/E's `psspy` API) is the implementation shipped since v0.2, replacing v0.1's `SimpleBessSimulator` — exactly the kind of swap the interface was reserved for, without redesigning the benchmark core.
 
 ```text
 SimulatorAdapter:

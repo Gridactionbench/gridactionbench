@@ -19,8 +19,8 @@ from gridactionbench.evaluators.base import EvaluationResult
 from gridactionbench.evaluators.gb_bess import EVALUATOR_SET_VERSION
 from gridactionbench.schemas.action import AgentActionV1
 from gridactionbench.schemas.observation import EnergyObservationV1
-from gridactionbench.simulators.base import StepResult
-from gridactionbench.simulators.simple_bess import SIMULATOR_VERSION
+from gridactionbench.simulators.base import PowerFlowStepResult
+from gridactionbench.simulators.psse_simulator import SIMULATOR_VERSION
 
 
 class DecisionRecord(BaseModel):
@@ -92,8 +92,17 @@ def evaluation_result_to_dict(r: EvaluationResult) -> dict[str, Any]:
     }
 
 
-def step_result_to_dict(s: StepResult) -> dict[str, Any]:
-    return {"resulting_soc": s.resulting_soc, "energy_stored_delta_mwh": s.energy_stored_delta_mwh}
+def step_result_to_dict(s: PowerFlowStepResult) -> dict[str, Any]:
+    # Keys stringified here (bus/branch ids are ints in PowerFlowStepResult, branch_id is
+    # already a str) so this dict is identical whether read fresh in-process or reloaded
+    # from JSONL — JSON object keys are always strings, so an int-keyed dict would
+    # silently become string-keyed only after a round-trip otherwise.
+    return {
+        "converged": s.converged,
+        "bus_voltages_pu": {str(k): v for k, v in s.bus_voltages_pu.items()},
+        "branch_loadings_mva": dict(s.branch_loadings_mva),
+        "generator_outputs_mw": {str(k): v for k, v in s.generator_outputs_mw.items()},
+    }
 
 
 class JsonlWriter:

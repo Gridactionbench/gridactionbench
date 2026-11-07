@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from baselines.always_escalate.agent import AlwaysEscalateAgent
 from baselines.rule_based.agent import RuleBasedAgent
-from baselines.seeded_failures.ignore_network import IgnoreNetworkAgent
+from baselines.seeded_failures.ignore_thermal_limit import IgnoreThermalLimitAgent
 from gridactionbench.core.episode import run_episode
 from gridactionbench.core.trajectory_record import (
     TrajectoryJsonlWriter,
@@ -54,9 +54,9 @@ def test_trajectory_record_carries_the_episode_s_task_family_tags():
 
 
 def test_trajectory_record_ucv_aggregates_match_episode_result():
-    trajectory = _build("GB-BESS-EP-002", IgnoreNetworkAgent(dt_hours=DT_HOURS))
+    trajectory = _build("GB-BESS-EP-002", IgnoreThermalLimitAgent(dt_hours=DT_HOURS))
     episode, _check_fn = EPISODES["GB-BESS-EP-002"]
-    result = run_episode(episode, IgnoreNetworkAgent(dt_hours=DT_HOURS), DT_HOURS)
+    result = run_episode(episode, IgnoreThermalLimitAgent(dt_hours=DT_HOURS), DT_HOURS)
     assert trajectory.any_ucv == result.any_ucv
     assert trajectory.ucv_count == result.ucv_count
 

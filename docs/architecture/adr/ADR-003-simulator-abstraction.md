@@ -1,6 +1,9 @@
 # ADR-003: Simulator Abstraction
 
-**Status:** Proposed
+**Status:** Superseded by ADR-018-psse-power-flow-adapter.md (2026-11-05) — the "no
+power-flow solver" decision below no longer holds; see that ADR for the pivot's rationale.
+Retained verbatim as the historical record of v0.1's original decision, not edited to match
+the new decision.
 
 ## Context
 Master brief §29-30 mandates `SimpleBessSimulator` for v0.1 and explicitly forbids building a power-flow solver, while also asking for a generic simulator interface anticipating future adapters (pandapower, OpenDSS, PowerFactory, GridLAB-D). Prior art review (`docs/research/PRIOR_ART.md` §1.1, item 2) found that the most methodologically aligned prior work (the Trashchenkov "Power Systems Agent Benchmark") explicitly uses deterministic surrogate evaluators rather than real simulators, with a documented "maturity ladder" for upgrading fidelity later without changing task/solution schemas — direct external validation for this approach.

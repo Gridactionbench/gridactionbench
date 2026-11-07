@@ -35,7 +35,7 @@ DT_HOURS = 0.5
 PRICE_PERTURBATION_FRACTION = 0.02
 # A purely multiplicative perturbation (price * (1 + fraction)) can never cross zero — it
 # preserves sign for any nonzero price — so it would never catch the single most relevant
-# boundary for RuleBasedAgent's action choice (the price=0 charge/discharge crossover).
+# boundary for RuleBasedAgent's action choice (the price=0 increase/decrease crossover).
 # This floor makes the perturbation additive and large enough, in absolute terms, to
 # actually test near-zero prices, not just scale large ones.
 MIN_ABSOLUTE_PRICE_PERTURBATION_GBP = 1.0
@@ -74,7 +74,7 @@ def _check_reasons(record: DecisionRecord) -> list[str]:
         reasons.append("reference agent produced a schema-invalid action")
     if (
         record.parsed_action is not None
-        and record.parsed_action.action in (ActionType.CHARGE, ActionType.DISCHARGE)
+        and record.parsed_action.action is ActionType.SET_GENERATION
         and record.simulator_post_state is None
     ):
         reasons.append("reference agent's power-bearing action produced no simulator post-state")
@@ -93,11 +93,17 @@ def _is_sensitive_to_small_perturbation(
     if price is None or record.parsed_action is None:
         return False
     delta = max(abs(price) * PRICE_PERTURBATION_FRACTION, MIN_ABSOLUTE_PRICE_PERTURBATION_GBP)
+    # Compares the full parsed action, not just `.action` — SET_GENERATION covers both the
+    # former CHARGE and DISCHARGE directions (docs/architecture/adr/ADR-018), so a
+    # same-type action whose `mw` flips from an increase to a decrease across the price=0
+    # crossover is exactly the sensitivity this check exists to catch, and `.action` alone
+    # would no longer distinguish it.
+    reference = record.parsed_action.model_dump()
     for perturbed_price in (price + delta, price - delta):
         perturbed = scenario.model_copy(deep=True)
         perturbed.oracle.market.reference_price_gbp_mwh = perturbed_price
         perturbed_record = run_single_step(perturbed, agent, dt_hours)
-        perturbed_action = perturbed_record.parsed_action.action if perturbed_record.parsed_action else None
-        if record.parsed_action.action != perturbed_action:
+        perturbed_action = perturbed_record.parsed_action.model_dump() if perturbed_record.parsed_action else None
+        if reference != perturbed_action:
             return True
     return False

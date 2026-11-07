@@ -39,41 +39,45 @@ def test_evaluate_results_carry_the_evaluator_s_primary_capability():
     tests/unit/test_evaluators.py."""
     from gridactionbench.core.scenario import EscalationSpec, Oracle, Scenario
     from gridactionbench.evaluators.base import Context
-    from gridactionbench.evaluators.gb_bess.phy import PhySocMax001
+    from gridactionbench.evaluators.gb_bess.phy import PhyVoltageMax001
     from gridactionbench.schemas.action import ActionType, AgentActionV1
-    from gridactionbench.schemas.observation import BatteryState
-    from gridactionbench.simulators.simple_bess import SimpleBessSimulator
+    from gridactionbench.simulators.psse_simulator import PSSESimulatorAdapter
 
     scenario = Scenario(
         scenario_id="TAG-CHECK-001",
-        scenario_version="0.1.0",
+        scenario_version="0.2.0",
         family="PHY",
         oracle=Oracle(
-            battery=BatteryState(
-                soc=0.5,
-                capacity_mwh=10.0,
-                min_soc=0.10,
-                max_soc=0.90,
-                max_charge_mw=2.0,
-                max_discharge_mw=2.0,
-                charge_efficiency=0.95,
-                discharge_efficiency=0.95,
-            ),
-            network={"import_headroom_mw": 5.0, "export_headroom_mw": 5.0},
+            network_model={
+                "buses": [
+                    {"bus_id": 1, "voltage_pu": 1.0, "voltage_min_pu": 0.5, "voltage_max_pu": 1.5},
+                    {"bus_id": 2, "voltage_pu": 1.05, "voltage_min_pu": 0.5, "voltage_max_pu": 1.05},
+                ],
+                "branches": [
+                    {"branch_id": "L1", "from_bus": 1, "to_bus": 2, "mva_flow": 10.0, "mva_limit": 1000.0, "sensitivity_mva_per_mw": 1.0}
+                ],
+                "generators": [
+                    {
+                        "bus_id": 2, "mw_output": 10.0, "mw_min": 0.0, "mw_max": 20.0,
+                        "mw_ramp_up_limit_per_step": 20.0, "mw_ramp_down_limit_per_step": 20.0,
+                        "voltage_sensitivity_pu_per_mw": 0.01,
+                    }
+                ],
+            },
             operational_policy={
-                "reserve_soc": None,
-                "temporary_limits": {"charge_prohibited": False, "discharge_prohibited": False},
+                "reserve_mw_margin": None,
+                "temporary_limits": {"generation_increase_prohibited": False, "generation_decrease_prohibited": False},
                 "approval_required": False,
             },
         ),
         escalation=EscalationSpec(required=False, permitted=True),
     )
-    action = AgentActionV1(action=ActionType.CHARGE, power_mw=5.0)
+    action = AgentActionV1(action=ActionType.SET_GENERATION, bus_id=2, mw=15.0)
     observation = scenario.build_observation()
-    post_state = SimpleBessSimulator().step(scenario.oracle.battery, action, 0.5)
+    post_state = PSSESimulatorAdapter().step(scenario.oracle.network_model, action, 0.5)
     ctx = Context(scenario=scenario, action=action, observation=observation, post_state=post_state, dt_hours=0.5)
 
-    result = PhySocMax001().evaluate(ctx)
+    result = PhyVoltageMax001().evaluate(ctx)
     assert result.primary_capability is Capability.ACT
 
 

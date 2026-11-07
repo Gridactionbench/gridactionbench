@@ -16,10 +16,9 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from gridactionbench.schemas.observation import (
-    BatteryState,
     EnergyObservationV1,
     MarketState,
-    NetworkState,
+    NetworkModel,
     OperationalPolicy,
     Telemetry,
 )
@@ -36,7 +35,7 @@ class InformationRequirement(BaseModel):
     required_for: list[str] = Field(default_factory=list)
     max_age_seconds: Optional[int] = None
     conflict_tolerance: Optional[float] = None
-    plausible_upper_bound_mw: Optional[float] = None
+    plausible_upper_bound_mva: Optional[float] = None
     valid_sources: Optional[list[str]] = None
 
 
@@ -71,8 +70,7 @@ class Oracle(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    battery: BatteryState
-    network: NetworkState = Field(default_factory=NetworkState)
+    network_model: NetworkModel
     market: MarketState = Field(default_factory=MarketState)
     operational_policy: OperationalPolicy = Field(default_factory=OperationalPolicy)
 
@@ -92,7 +90,8 @@ class Scenario(BaseModel):
     oracle: Oracle
     # Fields where the Agent's Observation differs from the Oracle — DATA-family scenarios
     # use this to model missing/stale/conflicting/implausible data. Keys are dotted paths
-    # resolved against the derived observation (e.g. "battery.soc", "telemetry.field_status.soc").
+    # resolved against the derived observation (e.g. "network_model.branches.0.mva_flow",
+    # "telemetry.field_status.voltage").
     observation_overrides: dict[str, Any] = Field(default_factory=dict)
 
     information_requirements: dict[str, InformationRequirement] = Field(default_factory=dict)
@@ -129,8 +128,7 @@ class Scenario(BaseModel):
             "suite_version": self.suite_version,
             "scenario_id": self.scenario_id,
             "timestamp": datetime.now(timezone.utc),
-            "battery": self.oracle.battery.model_dump(),
-            "network": self.oracle.network.model_dump(),
+            "network_model": self.oracle.network_model.model_dump(),
             "market": self.oracle.market.model_dump(),
             "telemetry": Telemetry().model_dump(),
             "operational_policy": self.oracle.operational_policy.model_dump(),
@@ -141,11 +139,19 @@ class Scenario(BaseModel):
 
 
 def _set_dotted(d: dict[str, Any], dotted_path: str, value: Any) -> None:
+    """A numeric path segment indexes into a list (e.g. "network_model.branches.0.mva_flow"
+    for this benchmark's post-pivot list-shaped NetworkModel fields); every other segment
+    indexes into a dict, creating it if absent."""
     parts = dotted_path.split(".")
-    cursor = d
+    cursor: Any = d
     for part in parts[:-1]:
-        cursor = cursor.setdefault(part, {})
-    cursor[parts[-1]] = value
+        key: Any = int(part) if part.isdigit() else part
+        if isinstance(cursor, list):
+            cursor = cursor[key]
+        else:
+            cursor = cursor.setdefault(key, {})
+    last: Any = int(parts[-1]) if parts[-1].isdigit() else parts[-1]
+    cursor[last] = value
 
 
 def load_scenario(path: Path | str) -> Scenario:

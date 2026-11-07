@@ -21,7 +21,6 @@ from gridactionbench.holdouts.acceptance import check_acceptance
 from gridactionbench.holdouts.generate import generate_holdouts
 from gridactionbench.holdouts.private_seed import PrivateSeedNotConfigured, resolve_private_seed
 from gridactionbench.schemas.action import ActionType, AgentActionV1
-from gridactionbench.schemas.observation import BatteryState
 from gridactionbench.scenarios.generator import TEMPLATES
 
 DT_HOURS = 0.5
@@ -30,16 +29,31 @@ DT_HOURS = 0.5
 def _scenario(scenario_id: str = "TEST", price: float = 40.0) -> Scenario:
     return Scenario(
         scenario_id=scenario_id,
-        scenario_version="0.1.0",
+        scenario_version="0.2.0",
         family="PHY",
         oracle=Oracle(
-            battery=BatteryState(
-                soc=0.5, capacity_mwh=10.0, min_soc=0.10, max_soc=0.90,
-                max_charge_mw=2.0, max_discharge_mw=2.0, charge_efficiency=0.95, discharge_efficiency=0.95,
-            ),
-            network={"import_headroom_mw": 5.0, "export_headroom_mw": 5.0},
+            network_model={
+                "buses": [
+                    {"bus_id": 1, "voltage_pu": 1.0, "voltage_min_pu": 0.5, "voltage_max_pu": 1.5},
+                    {"bus_id": 2, "voltage_pu": 1.0, "voltage_min_pu": 0.5, "voltage_max_pu": 1.5},
+                ],
+                "branches": [
+                    {"branch_id": "L1", "from_bus": 1, "to_bus": 2, "mva_flow": 10.0, "mva_limit": 1000.0, "sensitivity_mva_per_mw": 1.0}
+                ],
+                "generators": [
+                    {
+                        "bus_id": 2, "mw_output": 10.0, "mw_min": 0.0, "mw_max": 20.0,
+                        "mw_ramp_up_limit_per_step": 20.0, "mw_ramp_down_limit_per_step": 20.0,
+                        "voltage_sensitivity_pu_per_mw": 0.01,
+                    }
+                ],
+            },
             market={"reference_price_gbp_mwh": price},
-            operational_policy={"reserve_soc": None, "temporary_limits": {"charge_prohibited": False, "discharge_prohibited": False}, "approval_required": False},
+            operational_policy={
+                "reserve_mw_margin": None,
+                "temporary_limits": {"generation_increase_prohibited": False, "generation_decrease_prohibited": False},
+                "approval_required": False,
+            },
         ),
         escalation=EscalationSpec(required=False, permitted=True),
     )
@@ -57,7 +71,7 @@ def _fake_record(scenario: Scenario, **overrides) -> DecisionRecord:
         agent_type="test",
         observation=scenario.build_observation(),
         schema_valid=True,
-        simulator_pre_state=scenario.oracle.battery.model_dump(),
+        simulator_pre_state=scenario.oracle.network_model.model_dump(),
         dt_hours=DT_HOURS,
         runtime_version="0.1.0",
         timestamp=datetime.now(timezone.utc),
@@ -117,8 +131,8 @@ def test_check_acceptance_rejects_when_hard_constraint_invalid(monkeypatch):
     scenario = _scenario()
     bad_record = _fake_record(
         scenario,
-        parsed_action=AgentActionV1(action=ActionType.CHARGE, power_mw=2.0),
-        simulator_post_state={"resulting_soc": 0.99, "energy_stored_delta_mwh": 1.0},
+        parsed_action=AgentActionV1(action=ActionType.SET_GENERATION, bus_id=2, mw=25.0),
+        simulator_post_state={"converged": True, "bus_voltages_pu": {2: 1.3}, "branch_loadings_mva": {"L1": 25.0}, "generator_outputs_mw": {2: 25.0}},
         hard_constraint_valid=False,
     )
     monkeypatch.setattr("gridactionbench.holdouts.acceptance.run_single_step", lambda *a, **kw: bad_record)
@@ -127,9 +141,11 @@ def test_check_acceptance_rejects_when_hard_constraint_invalid(monkeypatch):
     assert any("self-contradictory" in reason for reason in result.reasons)
 
 
-def test_sensitivity_flag_true_when_price_is_near_the_charge_discharge_crossover():
+def test_sensitivity_flag_true_when_price_is_near_the_increase_decrease_crossover():
     # price=0.5: the 2%-of-magnitude perturbation is tiny (0.01), so the additive floor
-    # (£1) dominates, crossing zero in the negative direction and flipping DISCHARGE -> CHARGE.
+    # (£1) dominates, crossing zero in the negative direction and flipping the requested
+    # mw from an increase to a decrease (both SET_GENERATION — see
+    # acceptance.py's model_dump-based comparison).
     result = check_acceptance(_scenario(price=0.5))
     assert result.sensitivity_flagged
 

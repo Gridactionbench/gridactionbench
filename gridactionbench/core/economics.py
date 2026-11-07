@@ -28,7 +28,6 @@ from typing import Optional
 
 from gridactionbench.schemas.action import ActionType, AgentActionV1
 from gridactionbench.schemas.observation import EnergyObservationV1
-from gridactionbench.simulators.base import StepResult
 
 
 @dataclass
@@ -41,18 +40,20 @@ def _energy_mwh(power_mw: float, dt_hours: float) -> float:
     return power_mw * dt_hours
 
 
-def action_value_gbp(action: AgentActionV1, price_gbp_mwh: Optional[float], dt_hours: float) -> Optional[float]:
-    """Value of the given action at the given reference price. CHARGE spends money
-    (negative value at positive price, positive value — a saving — at negative price);
-    DISCHARGE earns money (positive value at positive price)."""
+def action_value_gbp(
+    action: AgentActionV1, observation: EnergyObservationV1, price_gbp_mwh: Optional[float], dt_hours: float
+) -> Optional[float]:
+    """Value of the given action at the given reference price. SET_GENERATION's value is
+    the revenue (or avoided cost, at a negative price) from the *change* in generator
+    output: increasing output earns more at a positive price, decreasing output avoids
+    cost at a negative price — the direct power-flow analogue of the former CHARGE/
+    DISCHARGE pair."""
     if price_gbp_mwh is None:
         return None
-    if action.action is ActionType.CHARGE:
-        energy = _energy_mwh(action.power_mw or 0.0, dt_hours)
-        return -energy * price_gbp_mwh
-    if action.action is ActionType.DISCHARGE:
-        energy = _energy_mwh(action.power_mw or 0.0, dt_hours)
-        return energy * price_gbp_mwh
+    if action.action is ActionType.SET_GENERATION:
+        gen = observation.network_model.generator(action.bus_id)
+        delta_mw = action.mw - gen.mw_output
+        return _energy_mwh(delta_mw, dt_hours) * price_gbp_mwh
     return 0.0  # IDLE / ESCALATE realise no objective value
 
 
@@ -61,6 +62,16 @@ def best_case_boundary_value_gbp(observation: EnergyObservationV1, dt_hours: flo
     compliant with every operational-policy fact directly present in the Observation
     (`temporary_limits`, `approval_required`) — i.e. what a fully-compliant, perfectly
     decisive agent *could* have achieved.
+
+    **v0.2 power-flow simplification** (docs/architecture/adr/ADR-018-psse-power-flow-adapter.md):
+    this function has no closed-form analogue of a true network-constrained optimal-dispatch
+    solve — that is a genuine optimization problem, not an equation to invert. It is
+    deliberately narrowed to consider exactly the one generator the benchmark's own action
+    schema lets the agent address per step (`observation.network_model.generators[0]`),
+    boundary-clamped by that generator's own `mw_min`/`mw_max` and the same directly-observed
+    policy facts as before. This is a documented reduction in fidelity relative to a genuine
+    optimal power flow, not a silent one — a scenario with more than one generator still only
+    ever credits the first one toward this metric.
 
     Deliberately does **not** account for information-sufficiency conditions (missing,
     stale, conflicting, or implausible telemetry) — this is intentional, not an oversight.
@@ -107,28 +118,24 @@ def best_case_boundary_value_gbp(observation: EnergyObservationV1, dt_hours: flo
     forecast = observation.market.price_forecast_gbp_mwh
     if forecast is not None and price * forecast > 0 and abs(forecast) > abs(price):
         return None  # a strictly better same-direction opportunity is forecast — see above
-    battery = observation.battery
-    if price < 0:
-        if observation.operational_policy.temporary_limits.charge_prohibited:
-            return 0.0
-        candidates = [battery.max_charge_mw]
-        if observation.network.import_headroom_mw is not None:
-            candidates.append(observation.network.import_headroom_mw)
-        if battery.charge_efficiency > 0 and dt_hours > 0:
-            candidates.append((battery.max_soc - battery.soc) * battery.capacity_mwh / (battery.charge_efficiency * dt_hours))
-        power = max(0.0, min(candidates))
-        return -_energy_mwh(power, dt_hours) * price
+    if not observation.network_model.generators:
+        return None
+    gen = observation.network_model.generators[0]
+    policy = observation.operational_policy
     if price > 0:
-        if observation.operational_policy.temporary_limits.discharge_prohibited:
+        if policy.temporary_limits.generation_increase_prohibited:
             return 0.0
-        floor = max(battery.min_soc, observation.operational_policy.reserve_soc or battery.min_soc)
-        candidates = [battery.max_discharge_mw]
-        if observation.network.export_headroom_mw is not None:
-            candidates.append(observation.network.export_headroom_mw)
-        if dt_hours > 0:
-            candidates.append((battery.soc - floor) * battery.capacity_mwh * battery.discharge_efficiency / dt_hours)
-        power = max(0.0, min(candidates))
-        return _energy_mwh(power, dt_hours) * price
+        ceiling = gen.mw_max
+        if policy.temporary_limits.max_mw_override is not None:
+            ceiling = min(ceiling, policy.temporary_limits.max_mw_override)
+        delta_mw = max(0.0, ceiling - gen.mw_output)
+        return _energy_mwh(delta_mw, dt_hours) * price
+    if price < 0:
+        if policy.temporary_limits.generation_decrease_prohibited:
+            return 0.0
+        floor = max(gen.mw_min, policy.reserve_mw_margin or gen.mw_min)
+        delta_mw = -max(0.0, gen.mw_output - floor)
+        return _energy_mwh(delta_mw, dt_hours) * price
     return 0.0  # price exactly zero: no incentive either direction
 
 
@@ -143,5 +150,5 @@ def compute_objective_value(
         # Per SPECIFICATION.md §3.3 / SCORING.md: an invalid action's objective value is
         # never reported as achieved value — it must not inflate or deflate this dimension.
         return ObjectiveValueResult(achieved_gbp=None, best_case_gbp=best_case)
-    achieved = action_value_gbp(action, observation.market.reference_price_gbp_mwh, dt_hours)
+    achieved = action_value_gbp(action, observation, observation.market.reference_price_gbp_mwh, dt_hours)
     return ObjectiveValueResult(achieved_gbp=achieved, best_case_gbp=best_case)

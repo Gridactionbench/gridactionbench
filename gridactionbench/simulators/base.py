@@ -1,39 +1,47 @@
-"""SimulatorAdapter interface. See docs/architecture/adr/ADR-003-simulator-abstraction.md.
+"""SimulatorAdapter interface. See docs/architecture/adr/ADR-018-psse-power-flow-adapter.md
+(supersedes docs/architecture/adr/ADR-003-simulator-abstraction.md).
 
 Exactly two methods, by design — no simulator implementation may add a physical-asset
 addressing capability to this interface (docs/architecture/SECURITY.md, ADR-015).
+`NetworkModel` addressing (`bus_id`, `branch_id`) refers only to elements of a loaded
+synthetic benchmark case, never a real-world endpoint — ADR-015's constraint is about real
+operational systems and is unaffected by this interface's data shape.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from gridactionbench.schemas.action import AgentActionV1
-from gridactionbench.schemas.observation import BatteryState
+from gridactionbench.schemas.observation import NetworkModel
 
 
 @dataclass(frozen=True)
-class StepResult:
-    """Result of one deterministic simulation step.
+class PowerFlowStepResult:
+    """Result of one deterministic (to solver tolerance) power-flow solve.
 
-    energy_stored_delta_mwh is the signed, battery-side energy change: positive for a net
-    increase in stored energy (CHARGE), negative for a net decrease (DISCHARGE), zero for
-    IDLE/ESCALATE. Exposed explicitly (not just resulting_soc) so property tests can assert
-    the energy-conservation invariant directly — docs/suites/gb-bess/SPECIFICATION.md §9.4,
-    docs/testing/TEST_STRATEGY.md "Physical invariants."
+    Exposed as per-bus/per-branch/per-generator dicts (not just a pass/fail verdict) so
+    property tests can assert power-balance and limit invariants directly — see
+    docs/suites/gb-bess/SPECIFICATION.md §9, docs/testing/TEST_STRATEGY.md.
     """
 
-    resulting_soc: float
-    energy_stored_delta_mwh: float
+    converged: bool
+    bus_voltages_pu: dict[int, float] = field(default_factory=dict)
+    branch_loadings_mva: dict[str, float] = field(default_factory=dict)
+    generator_outputs_mw: dict[int, float] = field(default_factory=dict)
 
 
 class SimulatorAdapter(Protocol):
     def step(
-        self, battery: BatteryState, action: AgentActionV1, dt_hours: float, seed: int | None = None
-    ) -> StepResult: ...
+        self,
+        network_model: NetworkModel,
+        action: AgentActionV1,
+        dt_hours: float,
+        seed: int | None = None,
+    ) -> PowerFlowStepResult: ...
 
-    def validate_action(self, battery: BatteryState, action: AgentActionV1) -> bool:
+    def validate_action(self, network_model: NetworkModel, action: AgentActionV1) -> bool:
         """Hard-constraint pre-check only — see gridactionbench.core.validator for the
         Action Validator that actually gates simulator execution. This method exists on
         the interface for adapters that want to expose a cheap validity pre-check; the

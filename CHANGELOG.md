@@ -4,6 +4,93 @@ All notable changes to GridActionBench are documented here. Versioning follows `
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased] — Agent execution sandbox (protects held-out scenarios, blocks online cheating)
+
+Adds `SandboxedAgentAdapter` (`gridactionbench/agents/sandboxed.py`) and
+`DockerSandboxBackend` (`gridactionbench/agents/docker_backend.py`), plus the egress-proxy
+infrastructure to run it (`scripts/sandbox/`). New ADR:
+`docs/architecture/adr/ADR-019-agent-execution-sandbox.md`. No existing code changed —
+`AgentAdapter`, the runner, and every evaluator are untouched; this is a new
+`AgentAdapter` implementation slotting into the same `act(observation) -> action` seam
+every reference agent already uses. **168/168 tests pass** (156 unchanged + 12 new).
+
+### Why
+Two threats were confirmed, by direct audit, to have no existing mitigation: an evaluated
+agent (LLM-backed or tool-using) could leak held-out scenario/ground-truth data over its
+own network access, or use that access to look up an answer externally instead of
+reasoning over the observation it was given. `docs/benchmark/THREAT_MODEL.md`'s "Malicious
+tool output" row previously stated this was "out of GridActionBench's direct control" —
+an explicit, honest admission of the gap this closes.
+
+### Added
+- `gridactionbench/agents/sandboxed.py`: `SandboxedAgentAdapter`, `SandboxConfig` (refuses at construction time to expose any `GRIDACTIONBENCH_PRIVATE_*` env var to the sandbox — enforced once, in the config layer, not left to each backend), `SandboxIncident` (raised by default on any blocked-egress attempt, never silently dropped).
+- `gridactionbench/agents/docker_backend.py`: `DockerSandboxBackend` — one fresh, ephemeral, `--read-only`, `--cap-drop ALL` container per invocation; default `--network none`; attaches to a pre-provisioned, `--internal` Docker network fronted by an allowlisting Squid proxy only when an agent genuinely needs its own model-provider API access. Blocked-egress attempts are attributed by querying the shared proxy container's own log for the invocation's time window (`docker logs --since/--until`), not by parsing the agent container's own output.
+- `scripts/sandbox/`: `provision_network.sh` + `egress_proxy/` (Dockerfile, Squid config template) — the real infrastructure the Docker backend assumes exists, parameterized by an explicit, disclosed hostname allowlist, never a default-open one.
+- `tests/fakes/fake_sandbox_backend.py`: the test double used by all automated tests — explicitly documented as providing no real OS-level isolation of its own, only proving the adapter's own orchestration logic.
+- `tests/unit/test_sandboxed_agent.py`, `tests/integration/test_sandboxed_pipeline.py`: 12 new tests, including one proving the sandbox boundary changes isolation, not scoring — the same scenario through `RuleBasedAgent` in-process and through that same logic wrapped in `SandboxedAgentAdapter` produce identical evaluation results.
+
+### Docs
+- `docs/architecture/SECURITY.md` retitled from a single-topic doc to two clearly-separated sections — Physical-System Isolation (unchanged content) and the new Agent Execution Sandbox — deliberately not reusing "isolation" to mean both things.
+- `docs/benchmark/THREAT_MODEL.md`: "Malicious tool output" and "Hidden-set extraction" rows updated from an admitted gap to the new enforced mitigation (with residual limitations stated, not erased); "Scenario fingerprinting" noted as still only partially mitigated.
+- `docs/benchmark/SUBMISSION_RULES.md`: Reference Track's existing "no supplementary retrieval" rule is now enforced technically for any Verified-tier run, not just expected by honest disclosure.
+- `docs/benchmark/PUBLIC_PRIVATE_POLICY.md`: notes this sandbox as a prerequisite for safely populating the still-empty private evaluation repository and building the "Verified" tier — not a claim that either exists yet.
+
+### Honesty note (stated in the ADR, the Docker backend's own docstring, and `scripts/sandbox/README.md` — not just here)
+No Docker installation exists in this project's development environment. `DockerSandboxBackend` and `scripts/sandbox/` are written against Docker's and Squid's documented behaviour as carefully as possible, but have been exercised only through the fake backend — never against a real Docker host. Validate against a real host before relying on this for an actual Verified-tier run.
+
+### Not changed
+`gridactionbench/agents/base.py`, `gridactionbench/runners/`, `gridactionbench/core/`, every evaluator, and every existing reference/seeded-failure agent — all confirmed to make zero network calls today and left running in-process exactly as before; sandboxing them would be pure overhead for no safety gain.
+
+## [Unreleased] — Pivot GB-BESS from battery storage to PSS/E-simulated power flow
+
+Replaces the suite's subject system: a single Battery Energy Storage System
+(SOC, charge/discharge efficiency, import/export headroom) becomes a small,
+self-contained, synthetic power-flow network (one slack bus, one generator
+bus, one connecting branch), simulated by Siemens PTI PSS/E via its `psspy`
+Python API. Affects every versioned artifact (`docs/benchmark/VERSIONING.md`):
+suite `0.1.0` → `0.2.0`, scenario set `0.1.0` → `0.2.0`, evaluator set `0.3.0`
+→ `1.0.0` (MAJOR — PHY/NET pass/fail semantics changed for existing IDs),
+simulator `0.1.0` → `1.0.0`. New ADR: `docs/architecture/adr/ADR-018-psse-power-flow-adapter.md`,
+superseding `ADR-003-simulator-abstraction.md`. **All 20 hand-authored
+scenarios, all 8 episodes, the parametric generator's 20 templates, all 12
+baseline agents, and every test file were rewritten.** No published results
+exist yet for either version, so no cross-version comparability claim is at
+stake. **156/156 tests pass.**
+
+### Why, and what this does and doesn't verify
+Decided at the project owner's explicit direction, overriding
+`docs/project/PID.md`'s prior caution against scaling past single-asset scope
+before external calibration — recorded as a conscious override in ADR-018,
+not silently dropped. PSS/E is used strictly as an offline load-flow study
+engine against a synthetic, in-memory case (bus voltage genuinely solved via
+`fnsl`; branch loading computed from a declared linear sensitivity, not a
+line-flow call — see ADR-018 for why) — never a live grid connection, so
+`docs/architecture/adr/ADR-015-physical-system-isolation.md`'s constraint is
+unaffected. **No licensed PSS/E installation exists in this project's own
+environment.** `psspy_client.py` was written against PSS/E's documented API
+shape and has been exercised only against a fake double
+(`tests/fakes/fake_psspy.py`, this repo's first `conftest.py`) — real-PSS/E
+numerical correctness is unverified, and a Python/`psspy` version-compatibility
+risk (this repo targets Python >=3.11; `psspy` has historically shipped tied
+to older bundled interpreters) is unresolved. Both are stated in ADR-018 and
+`docs/benchmark/BENCHMARK_CARD.md`, not hidden.
+
+### Changed
+- **Schemas** (`gridactionbench/schemas/observation.py`, `action.py`): `BatteryState`/`NetworkState` → `NetworkModel` (`Bus`, `Branch`, `Generator`, with signed `sensitivity_mva_per_mw`/`baseline_mva` and `voltage_sensitivity_pu_per_mw` fields — offline-study-style distribution factors, not `psspy` inputs). `CHARGE`/`DISCHARGE` collapsed into one `SET_GENERATION(bus_id, mw)` action (`mw` is an absolute setpoint, not a delta) — a real, acknowledged narrowing: `MKT-PREFERRED-ACTION-001` can no longer distinguish direction from action type alone.
+- **Simulator**: `SimpleBessSimulator` → `PSSESimulatorAdapter` + `psspy_client.py` (the only module that imports `psspy`, lazily). `StepResult` (resulting SOC, energy delta) → `PowerFlowStepResult` (bus voltages, branch loadings, generator outputs, convergence flag).
+- **Evaluators**: PHY's 6 (SOC/rate/energy-availability formulas) → 6 new (voltage ceiling/floor, nameplate limits, ramp up/down). NET's 2 (import/export headroom) consolidated into 1, `NET-BRANCH-THERMAL-LIMIT-001` (one action type means a resulting overload is the same check regardless of direction; direction is recovered via signed sensitivity). OPS/DATA: field renames only (`soc`→`voltage`, `network_headroom`→`branch_loading`), logic unchanged. HUM/ADV/MKT: **zero code changes** — confirmed to have no battery/network field coupling at all before this pass began.
+- **`core/economics.py`**: boundary-value computation re-derived for generator dispatch (increase earns at positive price, decrease avoids cost at negative price — the direct analogue of the former CHARGE/DISCHARGE economics); the former exact SOC-inversion closed form has no power-flow equivalent, so the new version is a documented simplification (exactly one agent-controllable generator considered), not a silently narrower one.
+- **All 20 scenario YAMLs + `scripts/backfill_scenarios.py`**: regenerated against the new schema, each scenario's physical narrative intent preserved (see `docs/suites/gb-bess/SCENARIO_CATALOGUE.md`'s per-scenario mapping) and independently re-verified to produce its intended evaluator PASS/FAIL outcome.
+- **8 episodes** (`gridactionbench/scenarios/gb_bess/episodes.py`): same translation; one, EP-008, lost its original mechanistic proof (finite battery stored-energy scarcity has no power-flow analogue) and now tests the same DECIDE/timing-preference capability via the declarative `preferred_actions` mechanism alone — stated explicitly in that module's docstring, not silently weakened. Measured (not designed-in) revenue comparison: RuleBasedAgent 75 GBP vs. MpcLookaheadAgent 1500 GBP.
+- **Parametric generator** (`gridactionbench/scenarios/generator.py`): all 20 templates retranslated; `_price_preferred_action` documents the same MKT direction-blindness as above.
+- **All 12 baseline agents**: rewritten against the new schema; 3 seeded-failure agents renamed for accuracy (`always_charge`→`always_max_generation`, `ignore_minimum_soc`→`ignore_reserve_margin`, `ignore_network`→`ignore_thermal_limit`); `always_idle`/`always_escalate`/`never_escalate` needed no logic changes (confirmed zero battery-field coupling).
+- **`gridactionbench/holdouts/acceptance.py`**: sensitivity-perturbation check now compares the full parsed action (not just `.action`), since `SET_GENERATION` covers both former directions and a same-type action's `mw` flipping sign across the price=0 crossover is exactly what this check exists to catch.
+- **`core/decision_record.py`**: `simulator_post_state`'s nested dicts now stringify bus/branch-id keys at serialization time — found via a real JSONL round-trip test failure (int keys silently became string keys after a JSON round-trip but not in-process, a genuine bug this pivot introduced and then caught).
+- **Docs**: `docs/suites/gb-bess/SPECIFICATION.md`, `EVALUATION_SPEC.md`, `SCENARIO_CATALOGUE.md` fully rewritten; `docs/benchmark/BENCHMARK_CARD.md`'s now-false "not a power-flow solver" claim corrected; `docs/architecture/ARCHITECTURE.md`/`DATA_MODEL.md`/`DOMAIN_MODEL.md` updated at their battery-specific illustrations.
+
+### Not changed
+- `core/validator.py`, `reporting/report.py`, `evaluators/base.py`'s enums, the Capability/stress-dimension taxonomies, and the Oracle/Observation architectural separation — all confirmed domain-agnostic before this pass began and verified to need no changes.
+
 ## [Unreleased] — Fix two scoring/test-coverage bugs
 
 Fixes two bugs found during internal review: one in economic scoring, one in an episode failure-signature check with a gap in what it detected. **158/158 tests pass** (152 unchanged + 6 new).

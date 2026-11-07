@@ -14,6 +14,8 @@ To be reported as a Reference Track result, a run must hold fixed, exactly as pu
 
 **Agent architecture may differ freely** within the Reference Track — an LLM agent, a rule-based controller, and an RL policy are all eligible Reference Track participants, evaluated on identical footing. This is the direct analogue of MLPerf's Closed division: comparing decision-making approaches "apples-to-apples" against a fixed task.
 
+**For any GridActionBench Verified run, "no supplementary retrieval, no additional tool access" above is enforced technically, not just expected by disclosure.** The Agent Execution Sandbox (`docs/architecture/adr/ADR-019-agent-execution-sandbox.md`) runs the agent with default-deny network egress; a Reference Track agent gets no network path at all beyond, at most, its own declared model-provider API call. This closes the gap `docs/benchmark/THREAT_MODEL.md` previously left open (an honest submitter following this rule versus a submission that simply doesn't disclose honestly) for the one tier of result where it matters most. Local Result and Reproducible Submission runs are not required to use the sandbox and remain governed by disclosure alone, as before.
+
 ## Extended Track
 
 Permits experimentation with additional tools, retrieval, extra context beyond the standard observation, alternate simulators, novel multi-agent workflows, or additional models/ensembling. Extended Track results are always reported with an explicit list of what was added beyond the Reference Track configuration.
