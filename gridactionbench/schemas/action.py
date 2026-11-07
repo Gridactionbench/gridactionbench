@@ -41,7 +41,7 @@ class ReasonCode(str, Enum):
 class AgentActionV1(BaseModel):
     """Structured agent output. Strictly validated — see module docstring."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
     action: ActionType
     bus_id: Optional[int] = None

@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased] — Framework 0.2.0 and simulator 1.1.0 hardening
+
+- Reject non-finite numeric inputs and invalid network references; revalidate agent
+  actions at the runner boundary, including actions mutated in-process.
+- Require API success and solver convergence. Record invalid actions and unavailable
+  simulations as unscoreable outcomes with explicit report counts. Do not read failed
+  solve outputs or advance episode state from failed evaluations.
+- Bound subprocess output, validate and freeze sandbox configuration, require non-root
+  agent execution, reject image volumes, and explicitly clean up containers/networks.
+- Verify proxy policy and create a separate network/proxy/log stream per networked
+  invocation. Proxy and cleanup failures invalidate the invocation.
+- Add regression tests, opt-in Docker/PSS/E tests, locked dependencies, CI builds,
+  dependency auditing, secret scanning, dependency updates, and runtime release gates.
+- Update the README, contribution guidance, and citation metadata for power flow.
+
+Impact: previous invalid/non-finite/failed-solve outcomes are not comparable to the
+new results. Existing well-formed fake-solver golden outcomes remain unchanged.
+The suite/scenario and evaluator-set versions are unchanged; formulas are unchanged.
+Real PSS/E correctness and Docker isolation remain unverified. See
+[ADR-020](docs/architecture/adr/ADR-020-execution-hardening.md).
+
 All notable changes to GridActionBench are documented here. Versioning follows `docs/benchmark/VERSIONING.md` — framework, suite, scenario set, evaluator set, and simulator are versioned independently; this changelog notes which artifact(s) each entry affects.
 
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).

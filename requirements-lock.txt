@@ -1,19 +1,43 @@
-# Pinned dependency versions for reproducible GridActionBench runs.
-#
-# This is a hand-curated pin of direct + key transitive dependencies as installed during
-# Phase 1 development, not a tool-generated full transitive closure (pip-compile/uv lock
-# would produce a more complete lock — see docs/project/BACKLOG.md's "Explicitly deferred"
-# note). Install with: pip install -r requirements-lock.txt -e .
-#
-# Python: 3.13.5 (development environment; ADR-001 requires >=3.11)
-
-pydantic==2.12.4
-pydantic_core==2.41.5
-PyYAML==6.0.3
-typer==0.27.0
-click==8.3.1
-rich==13.9.4
+annotated-doc==0.0.5
+    # via typer
+annotated-types==0.8.0
+    # via pydantic
+colorama==0.4.6 ; sys_platform == 'win32'
+    # via
+    #   pytest
+    #   typer
+iniconfig==2.3.1
+    # via pytest
+markdown-it-py==4.2.0
+    # via rich
+mdurl==0.1.2
+    # via markdown-it-py
+packaging==26.3
+    # via pytest
+pluggy==1.7.0
+    # via pytest
+pydantic==2.14.3
+    # via gridactionbench
+pydantic-core==2.50.4
+    # via pydantic
+pygments==2.21.0
+    # via
+    #   pytest
+    #   rich
+pytest==9.2.0
+    # via gridactionbench
+pyyaml==6.0.3
+    # via gridactionbench
+rich==15.0.0
+    # via typer
 shellingham==1.5.4
-typing_extensions==4.15.0
-typing-inspection==0.4.2
-pytest==9.0.1
+    # via typer
+typer==0.28.0
+    # via gridactionbench
+typing-extensions==4.16.0
+    # via
+    #   pydantic
+    #   pydantic-core
+    #   typing-inspection
+typing-inspection==0.4.5
+    # via pydantic

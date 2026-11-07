@@ -19,10 +19,16 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-class Bus(BaseModel):
+class FiniteModel(BaseModel):
+    """Reject non-finite inputs before numeric comparisons or solver calls."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+
+class Bus(FiniteModel):
     model_config = ConfigDict(extra="forbid")
 
     bus_id: int
@@ -31,7 +37,7 @@ class Bus(BaseModel):
     voltage_max_pu: float = Field(gt=0.0)
 
 
-class Branch(BaseModel):
+class Branch(FiniteModel):
     model_config = ConfigDict(extra="forbid")
 
     branch_id: str
@@ -58,7 +64,7 @@ class Branch(BaseModel):
     baseline_mva: float = 0.0
 
 
-class Generator(BaseModel):
+class Generator(FiniteModel):
     model_config = ConfigDict(extra="forbid")
 
     bus_id: int
@@ -75,7 +81,7 @@ class Generator(BaseModel):
     voltage_sensitivity_pu_per_mw: float = 0.0
 
 
-class NetworkModel(BaseModel):
+class NetworkModel(FiniteModel):
     """A small, self-contained, synthetic power-flow case. Not real grid topology — see
     module docstring. Solved by `gridactionbench.simulators.psse_simulator.PSSESimulatorAdapter`
     (real PSS/E via `psspy`) or, in tests, a fake `psspy` double."""
@@ -86,6 +92,24 @@ class NetworkModel(BaseModel):
     branches: list[Branch] = Field(default_factory=list)
     generators: list[Generator] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def _check_references(self) -> "NetworkModel":
+        bus_ids = [bus.bus_id for bus in self.buses]
+        if any(bus_id <= 0 for bus_id in bus_ids) or len(set(bus_ids)) != len(bus_ids):
+            raise ValueError("bus IDs must be positive and unique")
+        branch_ids = [branch.branch_id for branch in self.branches]
+        if len(set(branch_ids)) != len(branch_ids):
+            raise ValueError("branch IDs must be unique")
+        gen_ids = [gen.bus_id for gen in self.generators]
+        if len(set(gen_ids)) != len(gen_ids):
+            raise ValueError("only one controllable generator per bus is supported")
+        known = set(bus_ids)
+        if any(gen.bus_id not in known for gen in self.generators):
+            raise ValueError("generator references an unknown bus")
+        if any(br.from_bus not in known or br.to_bus not in known for br in self.branches):
+            raise ValueError("branch references an unknown bus")
+        return self
+
     def bus(self, bus_id: int) -> Bus:
         return next(b for b in self.buses if b.bus_id == bus_id)
 
@@ -93,7 +117,7 @@ class NetworkModel(BaseModel):
         return next(g for g in self.generators if g.bus_id == bus_id)
 
 
-class MarketState(BaseModel):
+class MarketState(FiniteModel):
     model_config = ConfigDict(extra="forbid")
 
     reference_price_gbp_mwh: Optional[float] = None
@@ -102,7 +126,7 @@ class MarketState(BaseModel):
     price_forecast_gbp_mwh: Optional[float] = None
 
 
-class TelemetryFieldStatus(BaseModel):
+class TelemetryFieldStatus(FiniteModel):
     model_config = ConfigDict(extra="forbid")
 
     voltage: str = "fresh"
@@ -110,14 +134,14 @@ class TelemetryFieldStatus(BaseModel):
     market: str = "fresh"
 
 
-class TelemetryAgeSeconds(BaseModel):
+class TelemetryAgeSeconds(FiniteModel):
     model_config = ConfigDict(extra="forbid")
 
     voltage: Optional[int] = None
     branch_flow: Optional[int] = None
 
 
-class Telemetry(BaseModel):
+class Telemetry(FiniteModel):
     model_config = ConfigDict(extra="forbid")
 
     field_status: TelemetryFieldStatus = Field(default_factory=TelemetryFieldStatus)
@@ -131,7 +155,7 @@ class Telemetry(BaseModel):
     voltage_reading_2: Optional[float] = None
 
 
-class TemporaryLimits(BaseModel):
+class TemporaryLimits(FiniteModel):
     model_config = ConfigDict(extra="forbid")
 
     generation_increase_prohibited: bool = False
@@ -139,7 +163,7 @@ class TemporaryLimits(BaseModel):
     max_mw_override: Optional[float] = None
 
 
-class OperationalPolicy(BaseModel):
+class OperationalPolicy(FiniteModel):
     model_config = ConfigDict(extra="forbid")
 
     # Analogous to the former reserve_soc: a generator-output floor stricter than mw_min.
@@ -148,7 +172,7 @@ class OperationalPolicy(BaseModel):
     approval_required: bool = False
 
 
-class EnergyObservationV1(BaseModel):
+class EnergyObservationV1(FiniteModel):
     """Agent-visible observation. See docs/suites/gb-bess/SPECIFICATION.md §2.
 
     schema_version bumped to 2.0.0: breaking change (battery -> network_model), per

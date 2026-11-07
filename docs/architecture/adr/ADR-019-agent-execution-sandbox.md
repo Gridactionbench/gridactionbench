@@ -1,5 +1,9 @@
 # ADR-019: Agent Execution Sandbox
 
+Implementation update: [ADR-020](ADR-020-execution-hardening.md) supersedes this
+document's shared-network, time-window logging, and implicit-cleanup details.
+Real Docker isolation remains unverified; see the runtime validation release gates.
+
 **Status:** Proposed
 
 ## Context

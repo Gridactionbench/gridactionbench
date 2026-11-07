@@ -19,6 +19,10 @@ constructed in a form the sandboxed process could reach, and the private holdout
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
+import re
+from types import MappingProxyType
+from collections.abc import Mapping
 from typing import Callable, Optional, Protocol
 
 from gridactionbench.schemas.action import AgentActionV1
@@ -29,6 +33,21 @@ from gridactionbench.schemas.observation import EnergyObservationV1
 # private holdout seed foremost among them. Matched by prefix so the whole
 # GRIDACTIONBENCH_PRIVATE_* family is covered, not just today's one exact name.
 FORBIDDEN_ENV_PREFIXES = ("GRIDACTIONBENCH_PRIVATE_",)
+
+
+def validate_hosts(hosts) -> tuple[str, ...]:
+    """Exact public DNS names only; no wildcard, IP literal, or ACL syntax."""
+    result = []
+    for host in hosts:
+        if not isinstance(host, str) or len(host) > 253 or host != host.lower():
+            raise SandboxForbiddenConfigError("allowed hosts must be lowercase DNS names")
+        labels = host.split(".")
+        if len(labels) < 2 or any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", x) for x in labels):
+            raise SandboxForbiddenConfigError("allowed hosts must be exact DNS names")
+        if all(label.isdigit() for label in labels):
+            raise SandboxForbiddenConfigError("IP literals are not allowed")
+        result.append(host)
+    return tuple(sorted(set(result)))
 
 
 class SandboxForbiddenConfigError(ValueError):
@@ -47,19 +66,39 @@ class SandboxConfig:
     """
 
     allowed_hosts: tuple[str, ...] = ()
-    env: dict[str, str] = field(default_factory=dict)
+    env: Mapping[str, str] = field(default_factory=dict)
     timeout_seconds: float = 30.0
     memory_limit_mb: int = 512
     cpu_limit: float = 1.0
     pids_limit: int = 64
+    max_output_bytes: int = 262144
 
     def __post_init__(self) -> None:
-        for key in self.env:
-            if any(key.startswith(prefix) for prefix in FORBIDDEN_ENV_PREFIXES):
+        for name in ("timeout_seconds", "cpu_limit"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise SandboxForbiddenConfigError(f"{name} must be finite and positive")
+        for name in ("memory_limit_mb", "pids_limit", "max_output_bytes"):
+            value = getattr(self, name)
+            if type(value) is not int or value <= 0:
+                raise SandboxForbiddenConfigError(f"{name} must be a positive integer")
+        if self.max_output_bytes > 16 * 1024 * 1024:
+            raise SandboxForbiddenConfigError("max_output_bytes must not exceed 16 MiB")
+        copied = dict(self.env)
+        for key, value in copied.items():
+            if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                raise SandboxForbiddenConfigError("invalid environment variable name")
+            if not isinstance(value, str) or "\0" in value:
+                raise SandboxForbiddenConfigError("environment values must be strings without NUL")
+            if any(key.upper().startswith(prefix) for prefix in FORBIDDEN_ENV_PREFIXES):
                 raise SandboxForbiddenConfigError(
                     f"refusing to build a SandboxConfig that would expose {key!r} to a "
                     "sandboxed agent process"
                 )
+            if key.upper() in {"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"}:
+                raise SandboxForbiddenConfigError("proxy environment is managed by the backend")
+        object.__setattr__(self, "env", MappingProxyType(copied))
+        object.__setattr__(self, "allowed_hosts", validate_hosts(self.allowed_hosts))
 
 
 @dataclass(frozen=True)

@@ -14,7 +14,7 @@ GridActionBench is a runnable, simulation-based benchmark harness — Phase 1-3 
 
 - **Scenarios** — new or improved scenario definitions, following the schema in `docs/architecture/DATA_MODEL.md` and the review ladder in `docs/suites/gb-bess/SCENARIO_CATALOGUE.md` (DRAFT → ENGINEERING_REVIEWED → BENCHMARK_REVIEWED → VERIFIED).
 - **Evaluators** — new or improved evaluator specifications/implementations, following the format in `docs/suites/gb-bess/EVALUATION_SPEC.md`.
-- **Simulator adapters** — future `SimulatorAdapter` implementations beyond `SimpleBessSimulator`, per `docs/architecture/adr/ADR-003-simulator-abstraction.md`.
+- **Simulator adapters** — validate or extend `PSSESimulatorAdapter`, following [ADR-018](docs/architecture/adr/ADR-018-psse-power-flow-adapter.md) and the [runtime validation gates](docs/testing/RUNTIME_VALIDATION.md).
 - **Agent adapters** — new reference or provider-specific agent implementations, per `docs/architecture/adr/ADR-004-agent-abstraction.md`. No provider is privileged in the core benchmark.
 - **Datasets** — proposed real-world data sources, always with a complete provenance record (`docs/architecture/DATA_MODEL.md`, "Data provenance record") and confirmed licensing before any data is committed (`docs/architecture/adr/ADR-012-data-provenance.md`).
 - **Documentation and research** — corrections, expansions, or challenges to any specification or research document.
