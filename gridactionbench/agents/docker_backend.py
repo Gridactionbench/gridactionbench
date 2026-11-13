@@ -11,6 +11,7 @@ import re
 import shutil
 import time
 import uuid
+from urllib.parse import urlsplit
 
 from gridactionbench.agents.docker_process import DockerProcessError, run_bounded
 from gridactionbench.agents.proxy_policy import normalized_policy, render_proxy_config
@@ -182,6 +183,24 @@ class DockerSandboxBackend:
                 raise SandboxBackendError("; ".join(failures))
 
 
+def _denied_host(method: str, target: str) -> str | None:
+    """The host an agent tried to reach, from one access.log entry.
+
+    CONNECT logs an authority (``host:port``); every other method logs an
+    absolute URL. Reading only CONNECT meant a denied plain-HTTP attempt was
+    recorded as no attempt at all — and the canonical policy denies those too,
+    via ``http_access deny !SSL_ports`` (gridactionbench/agents/proxy_policy.py),
+    so they are a reachable case and not a hypothetical one.
+    """
+    if method == "CONNECT":
+        host = target.rsplit(":", 1)[0] if ":" in target else target
+    else:
+        host = urlsplit(target).hostname or ""
+    # IPv6 authorities are logged bracketed; urlsplit().hostname already strips
+    # brackets, userinfo and port, and lowercases.
+    return host.strip().strip("[]").lower() or None
+
+
 def _parse_squid_denied_hosts(proxy_log: str, *, strict: bool = False) -> tuple[str, ...]:
     """Parse canonical Squid access.log; fail explicitly on unrecognized nonempty logs."""
     hosts = []
@@ -192,6 +211,14 @@ def _parse_squid_denied_hosts(proxy_log: str, *, strict: bool = False) -> tuple[
             if strict and line.strip():
                 raise SandboxBackendError("unrecognized proxy access log format")
             continue
-        if "TCP_DENIED" in fields[3] and fields[5] == "CONNECT":
-            hosts.append(fields[6].rsplit(":", 1)[0])
+        if "TCP_DENIED" not in fields[3]:
+            continue
+        host = _denied_host(fields[5], fields[6])
+        if host is None:
+            # A denial we cannot attribute is the same failure this function
+            # exists to prevent: reporting no attempt where there was one.
+            if strict:
+                raise SandboxBackendError("could not determine the denied host from the proxy log")
+            continue
+        hosts.append(host)
     return tuple(hosts)
