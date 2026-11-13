@@ -163,3 +163,43 @@ def test_parse_squid_denied_hosts_extracts_denied_connect_targets():
 def test_parse_squid_denied_hosts_ignores_malformed_or_short_lines():
     assert _parse_squid_denied_hosts("garbage\nnot a log line\n") == ()
     assert _parse_squid_denied_hosts("") == ()
+
+
+def test_parse_squid_denied_hosts_records_plain_http_denials():
+    """Only CONNECT used to be counted, so a denied plain-HTTP attempt was
+    reported as no attempt at all and SandboxedAgent raised no incident for it.
+    The canonical policy denies these too, via `http_access deny !SSL_ports`."""
+    get = "1699999999.456 0 172.18.0.5 TCP_DENIED/403 4017 GET http://evil.example.com/steal - HIER_NONE/- text/html"
+    post = "1699999999.789 0 172.18.0.5 TCP_DENIED/403 4017 POST http://evil.example.com/exfil - HIER_NONE/- text/html"
+
+    assert _parse_squid_denied_hosts(get) == ("evil.example.com",)
+    assert _parse_squid_denied_hosts(post) == ("evil.example.com",)
+
+
+def test_parse_squid_denied_hosts_records_every_protocol_in_one_log():
+    log = (
+        "1699999999.123 12 172.18.0.5 TCP_DENIED/403 3985 CONNECT tunnel.example.com:443 - HIER_NONE/- -\n"
+        "1699999999.456 0 172.18.0.5 TCP_DENIED/403 4017 GET http://plain.example.com/steal - HIER_NONE/- text/html\n"
+        "1699999999.789 8 172.18.0.5 TCP_TUNNEL/200 5102 CONNECT api.anthropic.com:443 - HIER_DIRECT/1.2.3.4 -\n"
+    )
+    assert _parse_squid_denied_hosts(log, strict=True) == ("tunnel.example.com", "plain.example.com")
+
+
+def test_parse_squid_denied_hosts_normalizes_port_userinfo_and_case():
+    userinfo = "1699999999.1 0 172.18.0.5 TCP_DENIED/403 1 GET http://user:pw@EVIL.example.com:8080/p - HIER_NONE/- -"
+    v6_connect = "1699999999.2 0 172.18.0.5 TCP_DENIED/403 1 CONNECT [2001:db8::1]:443 - HIER_NONE/- -"
+    v6_http = "1699999999.3 0 172.18.0.5 TCP_DENIED/403 1 GET http://[2001:db8::2]:80/p - HIER_NONE/- -"
+
+    assert _parse_squid_denied_hosts(userinfo) == ("evil.example.com",)
+    assert _parse_squid_denied_hosts(v6_connect) == ("2001:db8::1",)
+    assert _parse_squid_denied_hosts(v6_http) == ("2001:db8::2",)
+
+
+def test_parse_squid_denied_hosts_strict_rejects_unattributable_denial():
+    """A denial whose host cannot be read is the same failure this parser exists
+    to prevent, so strict mode refuses to report it as nothing."""
+    line = "1699999999.1 0 172.18.0.5 TCP_DENIED/403 0 NONE error:transaction-end-before-headers - HIER_NONE/- -"
+
+    assert _parse_squid_denied_hosts(line) == ()
+    with pytest.raises(SandboxBackendError):
+        _parse_squid_denied_hosts(line, strict=True)
